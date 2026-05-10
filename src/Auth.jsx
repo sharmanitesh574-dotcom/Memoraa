@@ -135,12 +135,25 @@ export default function Auth() {
     }
     setBusy(true); setError('')
     try {
-      await signUp.create({
+      const created = await signUp.create({
         username: uname,
         ...(identifierType === 'email'
           ? { emailAddress: identifier }
           : { phoneNumber: identifier }),
       })
+      // eslint-disable-next-line no-console
+      console.log('[memoraa] signUp.create result:', {
+        status: created.status,
+        missingFields: created.missingFields,
+        unverifiedFields: created.unverifiedFields,
+        requiredFields: created.requiredFields,
+      })
+      const missing = (created.missingFields || []).filter(f => f !== 'email_address' && f !== 'phone_number')
+      if (missing.length > 0) {
+        setError(`Clerk requires more fields: ${missing.join(', ')}. Disable these in Clerk dashboard → User & authentication.`)
+        setBusy(false)
+        return
+      }
       if (identifierType === 'email') {
         await signUp.prepareEmailAddressVerification({ strategy: 'email_code' })
       } else {
@@ -179,21 +192,31 @@ export default function Auth() {
         const result = identifierType === 'email'
           ? await signUp.attemptEmailAddressVerification({ code: c })
           : await signUp.attemptPhoneNumberVerification({ code: c })
+        // eslint-disable-next-line no-console
+        console.log('[memoraa] signUp.attempt result:', result)
         if (result.status === 'complete') {
           await setActiveSignUp({ session: result.createdSessionId })
         } else {
-          setError('Verification incomplete. Try again.')
+          const missing = [
+            ...(result.missingFields || []),
+            ...(result.unverifiedFields || []).map(f => `verify_${f}`),
+          ].join(', ') || result.status
+          setError(`Sign-up not complete. Clerk is asking for: ${missing}. Disable that requirement in the Clerk dashboard or contact support.`)
         }
       } else {
         const strategy = identifierType === 'email' ? 'email_code' : 'phone_code'
         const result = await signIn.attemptFirstFactor({ strategy, code: c })
+        // eslint-disable-next-line no-console
+        console.log('[memoraa] signIn.attempt result:', result)
         if (result.status === 'complete') {
           await setActiveSignIn({ session: result.createdSessionId })
         } else {
-          setError('Verification incomplete. Try again.')
+          setError(`Sign-in stuck at status: ${result.status}. Check console for details.`)
         }
       }
     } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[memoraa] auth error:', err)
       setError(humanError(err) || 'Wrong code')
     } finally {
       setBusy(false)
