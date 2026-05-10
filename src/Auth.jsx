@@ -141,13 +141,9 @@ export default function Auth() {
           ? { emailAddress: identifier }
           : { phoneNumber: identifier }),
       })
+      const summary = `status=${created.status} missing=[${(created.missingFields || []).join(',')}] unverified=[${(created.unverifiedFields || []).join(',')}] required=[${(created.requiredFields || []).join(',')}]`
       // eslint-disable-next-line no-console
-      console.log('[memoraa] signUp.create result:', {
-        status: created.status,
-        missingFields: created.missingFields,
-        unverifiedFields: created.unverifiedFields,
-        requiredFields: created.requiredFields,
-      })
+      console.log('[memoraa] signUp.create →', summary)
       const missing = (created.missingFields || []).filter(f => f !== 'email_address' && f !== 'phone_number')
       if (missing.length > 0) {
         setError(`Clerk requires more fields: ${missing.join(', ')}. Disable these in Clerk dashboard → User & authentication.`)
@@ -192,8 +188,9 @@ export default function Auth() {
         const result = identifierType === 'email'
           ? await signUp.attemptEmailAddressVerification({ code: c })
           : await signUp.attemptPhoneNumberVerification({ code: c })
+        const summary = `status=${result.status} missing=[${(result.missingFields || []).join(',')}] unverified=[${(result.unverifiedFields || []).join(',')}] sessionId=${result.createdSessionId || 'none'}`
         // eslint-disable-next-line no-console
-        console.log('[memoraa] signUp.attempt result:', result)
+        console.log('[memoraa] signUp.attempt →', summary)
         if (result.status === 'complete') {
           await setActiveSignUp({ session: result.createdSessionId })
         } else {
