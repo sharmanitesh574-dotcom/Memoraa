@@ -316,10 +316,10 @@ Your rules:
 - Never be generic. Reference what you know about them when relevant.
 - Never say "I'm an AI" unless directly asked${memBlock}
 
-After your reply, on a NEW LINE, output this ONLY if something is genuinely worth remembering:
+After your reply, on a NEW LINE, output this whenever the user shares ANY personal detail (name, age, work, location, family, friends, mood, goal, plan, opinion, preference, hobby, frustration, win, fear, hope, routine):
 MEMORY_JSON: {"remember": "concise third-person fact about the user"}
 
-Do not output MEMORY_JSON if nothing meaningful was shared. Never fabricate memories.`
+Be generous — small details are valuable. Do not output MEMORY_JSON only if the message is purely a question with no personal content. Never fabricate memories.`
   }, [memories, profile.name, profile.language])
 
   // Call Claude via Vercel edge function
@@ -349,18 +349,22 @@ Do not output MEMORY_JSON if nothing meaningful was shared. Never fabricate memo
 
       const fullText = (data.content || []).map(b => b.text || '').join('')
 
-      // Extract memory
-      const memMatch = fullText.match(/MEMORY_JSON:\s*(\{[^}]+\})/s)
+      // Extract memory — tolerate code fences, lowercase, and stray whitespace
+      const memMatch = fullText.match(/MEMORY[_\s]*JSON\s*:?\s*`{0,3}\s*(\{[\s\S]*?"remember"[\s\S]*?\})/i)
       if (memMatch) {
         try {
           const { remember } = JSON.parse(memMatch[1])
-          if (remember && remember.length > 5) {
-            setMemories(prev => [remember, ...prev].slice(0, 150))
+          if (remember && typeof remember === 'string' && remember.trim().length > 4) {
+            setMemories(prev => {
+              const fact = remember.trim()
+              if (prev.some(m => m.toLowerCase() === fact.toLowerCase())) return prev
+              return [fact, ...prev].slice(0, 150)
+            })
           }
         } catch {}
       }
 
-      const cleanReply = fullText.replace(/MEMORY_JSON:.*$/s, '').trim()
+      const cleanReply = fullText.replace(/```[\s\S]*?```|MEMORY[_\s]*JSON[\s\S]*$/gi, '').trim()
       setHistory([...newHistory, { role: 'assistant', content: cleanReply }])
       setReply(cleanReply)
       speak(cleanReply)
@@ -573,23 +577,38 @@ Do not output MEMORY_JSON if nothing meaningful was shared. Never fabricate memo
             </span>
           </div>
 
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             <button
-              onClick={() => setView(v => v === 'memories' ? 'home' : 'memories')}
+              onClick={() => setView('home')}
+              aria-label="Home"
+              style={{
+                background: view === 'home' ? 'rgba(0,229,255,0.1)' : 'var(--pill)',
+                border: `1px solid ${view === 'home' ? 'rgba(0,229,255,0.25)' : 'var(--pill-border)'}`,
+                borderRadius: 20, padding: '6px 12px',
+                color: view === 'home' ? '#00e5ff' : 'var(--muted-light)',
+                fontSize: 12, fontFamily: "'Space Mono', monospace",
+                cursor: 'pointer', transition: 'all 0.25s',
+              }}
+            >
+              ⌂
+            </button>
+            <button
+              onClick={() => setView('memories')}
+              aria-label="Memories"
               style={{
                 background: view === 'memories' ? 'rgba(0,229,255,0.1)' : 'var(--pill)',
                 border: `1px solid ${view === 'memories' ? 'rgba(0,229,255,0.25)' : 'var(--pill-border)'}`,
-                borderRadius: 20, padding: '6px 14px',
+                borderRadius: 20, padding: '6px 12px',
                 color: view === 'memories' ? '#00e5ff' : 'var(--muted-light)',
                 fontSize: 12, fontFamily: "'Space Mono', monospace",
                 cursor: 'pointer', transition: 'all 0.25s',
-                display: 'flex', alignItems: 'center', gap: 6,
+                display: 'flex', alignItems: 'center', gap: 5,
               }}
             >
               🧠 {memories.length}
             </button>
             <button
-              onClick={() => setView(v => v === 'profile' ? 'home' : 'profile')}
+              onClick={() => setView('profile')}
               aria-label="Profile and settings"
               style={{
                 background: view === 'profile' ? 'rgba(0,229,255,0.1)' : 'var(--pill)',
@@ -598,7 +617,6 @@ Do not output MEMORY_JSON if nothing meaningful was shared. Never fabricate memo
                 color: view === 'profile' ? '#00e5ff' : 'var(--muted-light)',
                 fontSize: 12, fontFamily: "'Space Mono', monospace",
                 cursor: 'pointer', transition: 'all 0.25s',
-                display: 'flex', alignItems: 'center', gap: 6,
               }}
             >
               {profile.name ? profile.name.slice(0, 1).toUpperCase() : '👤'}
