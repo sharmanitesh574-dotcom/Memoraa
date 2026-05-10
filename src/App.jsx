@@ -242,6 +242,9 @@ export default function App() {
   const synthRef = useRef(window.speechSynthesis)
   const isListeningRef = useRef(false)
   const finalTranscriptRef = useRef('')
+  const voicesRef = useRef([])
+  const langRef = useRef(profile.language)
+  langRef.current = profile.language
 
   // Persist memories
   useEffect(() => {
@@ -257,6 +260,22 @@ export default function App() {
   useEffect(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition
     setVoiceSupported(!!SR)
+  }, [])
+
+  // Preload TTS voices (Chrome returns [] on first call until voiceschanged fires)
+  useEffect(() => {
+    const synth = synthRef.current
+    if (!synth) return
+    const load = () => { voicesRef.current = synth.getVoices() || [] }
+    load()
+    synth.addEventListener?.('voiceschanged', load)
+    return () => synth.removeEventListener?.('voiceschanged', load)
+  }, [])
+
+  // Stop any running recognition on unmount
+  useEffect(() => () => {
+    try { recognitionRef.current?.abort?.() } catch {}
+    try { synthRef.current?.cancel?.() } catch {}
   }, [])
 
   // PWA install prompt
@@ -316,8 +335,8 @@ Do not output MEMORY_JSON if nothing meaningful was shared. Never fabricate memo
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 800,
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 400,
           system: buildSystemPrompt(),
           messages: newHistory,
         }),
@@ -356,19 +375,23 @@ Do not output MEMORY_JSON if nothing meaningful was shared. Never fabricate memo
 
   // TTS
   const speak = useCallback((text) => {
+    if (!text) return
     setOrbState('speaking')
     setStatusText('Speaking...')
-    synthRef.current.cancel()
+    const synth = synthRef.current
+    synth.cancel()
+
+    const lang = profile.language
+    const voices = voicesRef.current.length ? voicesRef.current : (synth.getVoices?.() || [])
+    const exact = voices.find(v => v.lang === lang)
+    const base = lang.split('-')[0]
+    const fallback = voices.find(v => v.lang?.startsWith(base + '-') || v.lang === base)
 
     const u = new SpeechSynthesisUtterance(text)
-    u.lang = profile.language
-    const voices = synthRef.current.getVoices?.() || []
-    const exact = voices.find(v => v.lang === profile.language)
-    const base = profile.language.split('-')[0]
-    const fallback = voices.find(v => v.lang?.startsWith(base + '-') || v.lang === base)
+    u.lang = lang
     if (exact || fallback) u.voice = exact || fallback
-    u.rate = 0.93
-    u.pitch = 1.08
+    u.rate = 0.97
+    u.pitch = 1.05
     u.onend = () => {
       setOrbState('idle')
       setStatusText('Tap the orb to speak')
@@ -377,7 +400,7 @@ Do not output MEMORY_JSON if nothing meaningful was shared. Never fabricate memo
       setOrbState('idle')
       setStatusText('Tap the orb to speak')
     }
-    synthRef.current.speak(u)
+    synth.speak(u)
   }, [profile.language])
 
   // Start listening
@@ -391,6 +414,8 @@ Do not output MEMORY_JSON if nothing meaningful was shared. Never fabricate memo
       return
     }
 
+    // Tear down any prior session before starting a new one
+    try { recognitionRef.current?.abort?.() } catch {}
     synthRef.current.cancel()
     finalTranscriptRef.current = ''
 
@@ -398,7 +423,7 @@ Do not output MEMORY_JSON if nothing meaningful was shared. Never fabricate memo
     recognitionRef.current = rec
     rec.continuous = false
     rec.interimResults = true
-    rec.lang = profile.language
+    rec.lang = langRef.current
 
     rec.onstart = () => {
       isListeningRef.current = true
@@ -421,7 +446,8 @@ Do not output MEMORY_JSON if nothing meaningful was shared. Never fabricate memo
 
     rec.onend = () => {
       isListeningRef.current = false
-      const said = finalTranscriptRef.current.trim() || transcript.trim()
+      if (recognitionRef.current === rec) recognitionRef.current = null
+      const said = finalTranscriptRef.current.trim()
       if (said) {
         callClaude(said)
       } else {
@@ -432,13 +458,24 @@ Do not output MEMORY_JSON if nothing meaningful was shared. Never fabricate memo
 
     rec.onerror = (e) => {
       isListeningRef.current = false
-      if (e.error !== 'no-speech') setError("Couldn't hear you. Try again.")
+      if (recognitionRef.current === rec) recognitionRef.current = null
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        setError('Microphone blocked. Allow mic access in browser settings.')
+      } else if (e.error !== 'no-speech' && e.error !== 'aborted') {
+        setError("Couldn't hear you. Try again.")
+      }
       setOrbState('idle')
       setStatusText('Tap the orb to speak')
     }
 
-    rec.start()
-  }, [transcript, callClaude, profile.language])
+    try {
+      rec.start()
+    } catch {
+      isListeningRef.current = false
+      setError('Voice is busy. Tap again.')
+      setOrbState('idle')
+    }
+  }, [callClaude])
 
   const sendText = useCallback(() => {
     const said = textInput.trim()
