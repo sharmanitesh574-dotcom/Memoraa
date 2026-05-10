@@ -1,7 +1,5 @@
 import { verifyToken } from '@clerk/backend'
 
-export const config = { runtime: 'edge' }
-
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',

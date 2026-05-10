@@ -1,8 +1,6 @@
 import { verifyToken } from '@clerk/backend'
 import { neon } from '@neondatabase/serverless'
 
-export const config = { runtime: 'edge' }
-
 const sql = neon(process.env.DATABASE_URL)
 
 let schemaReady = false
