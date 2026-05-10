@@ -274,6 +274,12 @@ function MemoraaApp({ getToken }) {
   const mediaStreamRef = useRef(null)
   const audioPlayerRef = useRef(null)
 
+  // Streaming-TTS audio queue
+  const audioQueueRef = useRef([]) // [{ url, text }]
+  const audioPlayingRef = useRef(false)
+  const streamDoneRef = useRef(false)
+  const streamAbortRef = useRef(null)
+
   // Auth-aware fetch helper
   const authedFetch = useCallback(async (input, init = {}) => {
     const token = await getToken()
@@ -397,13 +403,98 @@ MEMORY_JSON: {"remember": "concise third-person fact about the user"}
 Be generous — small details are valuable. Do not output MEMORY_JSON only if the message is purely a question with no personal content. Never fabricate memories.`
   }, [memories, profile.name, profile.language])
 
-  // Call Claude via Vercel edge function
+  // ── Audio queue (sentence-by-sentence TTS) ────────────────────
+  const resetAudioQueue = useCallback(() => {
+    streamDoneRef.current = false
+    if (streamAbortRef.current) {
+      try { streamAbortRef.current.abort() } catch {}
+      streamAbortRef.current = null
+    }
+    if (audioPlayerRef.current) {
+      try { audioPlayerRef.current.pause(); audioPlayerRef.current.src = '' } catch {}
+      audioPlayerRef.current = null
+    }
+    for (const item of audioQueueRef.current) {
+      try { URL.revokeObjectURL(item.url) } catch {}
+    }
+    audioQueueRef.current = []
+    audioPlayingRef.current = false
+  }, [])
+
+  const playNextIfIdle = useCallback(() => {
+    if (audioPlayingRef.current) return
+    const item = audioQueueRef.current.shift()
+    if (!item) {
+      // Queue drained — if the SSE stream is finished we can go idle
+      if (streamDoneRef.current) {
+        setOrbState('idle')
+        setStatusText('Tap the orb to speak')
+      }
+      return
+    }
+    audioPlayingRef.current = true
+    setOrbState('speaking')
+    setStatusText('Speaking…')
+    const audio = new Audio(item.url)
+    audioPlayerRef.current = audio
+    const cleanup = () => {
+      try { URL.revokeObjectURL(item.url) } catch {}
+      audioPlayingRef.current = false
+      if (audioPlayerRef.current === audio) audioPlayerRef.current = null
+      playNextIfIdle()
+    }
+    audio.onended = cleanup
+    audio.onerror = cleanup
+    audio.play().catch(cleanup)
+  }, [])
+
+  const enqueueTTS = useCallback(async (text) => {
+    const t = (text || '').trim()
+    if (!t) return
+    try {
+      const token = await getToken()
+      const res = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ text: t, voice: 'nova' }),
+      })
+      if (!res.ok) {
+        // eslint-disable-next-line no-console
+        console.warn('[memoraa] /api/tts chunk failed', res.status)
+        return
+      }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      audioQueueRef.current.push({ url, text: t })
+      playNextIfIdle()
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[memoraa] tts chunk error:', err)
+    }
+  }, [getToken, playNextIfIdle])
+
+  // Find the index just past the LAST sentence terminator in `text`.
+  // Returns -1 if no full sentence is available yet.
+  const lastSentenceEnd = (text) => {
+    let last = -1
+    const re = /[.!?]+(?:\s|$)/g
+    let m
+    while ((m = re.exec(text)) !== null) {
+      last = m.index + m[0].length
+    }
+    return last
+  }
+
+  // Call Claude (streaming SSE) — sentences are sent to TTS as they appear
   const callClaude = useCallback(async (userText) => {
     setOrbState('thinking')
-    setStatusText('Thinking...')
+    setStatusText('Thinking…')
     setError('')
+    resetAudioQueue()
 
     const newHistory = [...history, { role: 'user', content: userText }]
+    const abort = new AbortController()
+    streamAbortRef.current = abort
 
     try {
       const res = await authedFetch('/api/chat', {
@@ -413,17 +504,84 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
           max_tokens: 400,
           system: buildSystemPrompt(),
           messages: newHistory,
+          stream: true,
         }),
+        signal: abort.signal,
       })
 
-      if (!res.ok) throw new Error(`API error ${res.status}`)
+      if (!res.ok || !res.body) {
+        const detail = await res.text().catch(() => '')
+        throw new Error(`chat ${res.status}: ${detail.slice(0, 200)}`)
+      }
 
-      const data = await res.json()
-      if (data.error) throw new Error(data.error.message || 'Unknown error')
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let sseBuffer = ''
+      let fullText = ''
+      let speechIdx = 0      // start of unspoken speech in fullText
+      let memorySeenAt = -1  // index where MEMORY_JSON appears (or -1)
 
-      const fullText = (data.content || []).map(b => b.text || '').join('')
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        sseBuffer += decoder.decode(value, { stream: true })
 
-      // Extract memory — tolerate code fences, lowercase, and stray whitespace
+        let eventEnd
+        while ((eventEnd = sseBuffer.indexOf('\n\n')) >= 0) {
+          const block = sseBuffer.slice(0, eventEnd)
+          sseBuffer = sseBuffer.slice(eventEnd + 2)
+          const dataMatch = block.match(/^data: (.+)$/m)
+          if (!dataMatch) continue
+          let event
+          try { event = JSON.parse(dataMatch[1]) } catch { continue }
+
+          if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
+            fullText += event.delta.text || ''
+
+            // Update visible reply (strip the MEMORY tail when present)
+            const visible = fullText.replace(/MEMORY[_\s]*JSON[\s\S]*$/i, '').trim()
+            setReply(visible)
+
+            // Lock in memory marker position once seen
+            if (memorySeenAt < 0) {
+              const idx = fullText.search(/MEMORY[_\s]*JSON/i)
+              if (idx >= 0) memorySeenAt = idx
+            }
+
+            // How far we're allowed to speak
+            const speechEnd = memorySeenAt >= 0 ? memorySeenAt : fullText.length
+            if (speechIdx >= speechEnd) continue
+
+            const slice = fullText.slice(speechIdx, speechEnd)
+            const cut = lastSentenceEnd(slice)
+            if (cut > 0) {
+              const chunk = slice.slice(0, cut).trim()
+              if (chunk) enqueueTTS(chunk)
+              speechIdx += cut
+            } else if (memorySeenAt >= 0 && speechIdx < memorySeenAt) {
+              // Memory marker arrived without a final sentence terminator —
+              // speak whatever's left up to the marker so we don't truncate
+              const tail = fullText.slice(speechIdx, memorySeenAt).trim()
+              if (tail) enqueueTTS(tail)
+              speechIdx = memorySeenAt
+            }
+          }
+        }
+      }
+
+      // Speak any remaining trailing text (no terminator at end)
+      const speechEnd = memorySeenAt >= 0 ? memorySeenAt : fullText.length
+      if (speechIdx < speechEnd) {
+        const tail = fullText.slice(speechIdx, speechEnd).trim()
+        if (tail) enqueueTTS(tail)
+      }
+
+      // Persist the clean reply to history + UI
+      const cleanReply = fullText.replace(/```[\s\S]*?```|MEMORY[_\s]*JSON[\s\S]*$/gi, '').trim()
+      setHistory([...newHistory, { role: 'assistant', content: cleanReply }])
+      setReply(cleanReply)
+
+      // Memory extraction
       const memMatch = fullText.match(/MEMORY[_\s]*JSON\s*:?\s*`{0,3}\s*(\{[\s\S]*?"remember"[\s\S]*?\})/i)
       if (memMatch) {
         try {
@@ -445,18 +603,24 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
         } catch {}
       }
 
-      const cleanReply = fullText.replace(/```[\s\S]*?```|MEMORY[_\s]*JSON[\s\S]*$/gi, '').trim()
-      setHistory([...newHistory, { role: 'assistant', content: cleanReply }])
-      setReply(cleanReply)
-      speak(cleanReply)
-
+      streamDoneRef.current = true
+      // If audio queue already drained, go idle now; otherwise playNext handles it
+      if (!audioPlayingRef.current && audioQueueRef.current.length === 0) {
+        setOrbState('idle')
+        setStatusText('Tap the orb to speak')
+      }
     } catch (err) {
-      console.error(err)
-      setError('Could not reach Memoraa. Check your connection.')
+      // eslint-disable-next-line no-console
+      console.error('[memoraa] chat stream error:', err)
+      if (err?.name !== 'AbortError') {
+        setError('Could not reach Memoraa. Check your connection.')
+      }
       setOrbState('idle')
       setStatusText('Tap the orb to speak')
+    } finally {
+      streamAbortRef.current = null
     }
-  }, [history, buildSystemPrompt, authedFetch, memories])
+  }, [history, buildSystemPrompt, authedFetch, memories, enqueueTTS, resetAudioQueue])
 
   // Pick the highest-quality voice we can find for the chosen language.
   // Prefers neural / "Google" / "Microsoft" / "Premium" voices over basic ones.
@@ -766,19 +930,16 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
   const handleOrbTap = () => {
     primeTTS()
     if (orbState === 'listening') {
-      // Stop whichever path is running
       try { recorderRef.current?.stop() } catch {}
       try { recognitionRef.current?.stop() } catch {}
-    } else if (orbState === 'speaking') {
-      // Cancel API audio + browser TTS
-      if (audioPlayerRef.current) {
-        try { audioPlayerRef.current.pause(); audioPlayerRef.current.src = '' } catch {}
-        audioPlayerRef.current = null
-      }
+    } else if (orbState === 'speaking' || orbState === 'thinking') {
+      // Cancel any in-flight stream + audio queue + browser TTS
+      resetAudioQueue()
       synthRef.current.cancel()
       setOrbState('idle')
       setStatusText('Tap the orb to speak')
     } else if (orbState === 'idle') {
+      resetAudioQueue()
       startListening()
     }
   }

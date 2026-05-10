@@ -1,4 +1,5 @@
 import { verifyToken } from '@clerk/backend'
+import { Readable } from 'node:stream'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -33,6 +34,8 @@ export default async function handler(req, res) {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) return res.status(500).json({ error: { message: 'API key not configured' } })
 
+  const isStream = req.body?.stream === true
+
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -44,9 +47,28 @@ export default async function handler(req, res) {
       body: JSON.stringify(req.body),
     })
 
-    const data = await response.json()
-    res.status(response.status).json(data)
+    if (!isStream) {
+      const data = await response.json()
+      return res.status(response.status).json(data)
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream')
+    res.setHeader('Cache-Control', 'no-cache, no-transform')
+    res.setHeader('Connection', 'keep-alive')
+    res.setHeader('X-Accel-Buffering', 'no')
+    res.status(response.status)
+
+    if (response.body && Readable.fromWeb) {
+      Readable.fromWeb(response.body).pipe(res)
+    } else {
+      const buf = Buffer.from(await response.arrayBuffer())
+      res.end(buf)
+    }
   } catch (err) {
-    res.status(500).json({ error: { message: err.message } })
+    if (!res.headersSent) {
+      res.status(500).json({ error: { message: err.message } })
+    } else {
+      try { res.end() } catch {}
+    }
   }
 }
