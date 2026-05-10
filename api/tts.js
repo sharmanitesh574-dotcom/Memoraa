@@ -37,19 +37,20 @@ export default async function handler(req, res) {
   if (text.length > 4000) return res.status(400).json({ error: 'text too long' })
 
   const voice = (body.voice || 'nova').toString()
-  const model = (body.model || 'openai/tts-1').toString()
+  const model = (body.model || 'tts-1').toString()
 
-  const gatewayKey = process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN
-  if (!gatewayKey) return res.status(500).json({ error: 'AI Gateway not configured' })
+  const openaiKey = process.env.OPENAI_API_KEY
+  if (!openaiKey) {
+    return res.status(500).json({ error: 'OPENAI_API_KEY not configured' })
+  }
 
-  const url = 'https://ai-gateway.vercel.sh/v1/audio/speech'
-  const usingOidc = !process.env.AI_GATEWAY_API_KEY && !!process.env.VERCEL_OIDC_TOKEN
+  const url = 'https://api.openai.com/v1/audio/speech'
   let upstream
   try {
     upstream = await fetch(url, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${gatewayKey}`,
+        Authorization: `Bearer ${openaiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -61,7 +62,7 @@ export default async function handler(req, res) {
     })
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.error('[tts] upstream fetch threw:', err.message, { url, usingOidc })
+    console.error('[tts] upstream fetch threw:', err.message, { url })
     return res.status(502).json({ error: 'upstream_fetch_failed', detail: err.message })
   }
 
@@ -73,7 +74,6 @@ export default async function handler(req, res) {
       url,
       status: upstream.status,
       statusText: upstream.statusText,
-      usingOidc,
       model,
       voice,
       detail: detail.slice(0, 1000),

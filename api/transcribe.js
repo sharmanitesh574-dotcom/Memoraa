@@ -40,8 +40,10 @@ export default async function handler(req, res) {
   const userId = await userIdFromRequest(req)
   if (!userId) return res.status(401).json({ error: 'unauthorized' })
 
-  const gatewayKey = process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN
-  if (!gatewayKey) return res.status(500).json({ error: 'AI Gateway not configured' })
+  const openaiKey = process.env.OPENAI_API_KEY
+  if (!openaiKey) {
+    return res.status(500).json({ error: 'OPENAI_API_KEY not configured' })
+  }
 
   const audioMime = req.headers['content-type'] || 'audio/webm'
   const language = ((req.query?.language || '').toString().split('-')[0]) || ''
@@ -63,22 +65,21 @@ export default async function handler(req, res) {
 
   const form = new FormData()
   form.append('file', new Blob([audio], { type: audioMime }), `audio.${ext}`)
-  form.append('model', 'openai/whisper-1')
+  form.append('model', 'whisper-1')
   if (language) form.append('language', language)
   form.append('prompt', 'Casual conversation. May include English, Hindi, Hinglish, or other languages.')
 
-  const url = 'https://ai-gateway.vercel.sh/v1/audio/transcriptions'
-  const usingOidc = !process.env.AI_GATEWAY_API_KEY && !!process.env.VERCEL_OIDC_TOKEN
+  const url = 'https://api.openai.com/v1/audio/transcriptions'
   let upstream
   try {
     upstream = await fetch(url, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${gatewayKey}` },
+      headers: { Authorization: `Bearer ${openaiKey}` },
       body: form,
     })
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.error('[transcribe] upstream fetch threw:', err.message, { url, usingOidc, audioMime, bytes: audio.length })
+    console.error('[transcribe] upstream fetch threw:', err.message, { url, audioMime, bytes: audio.length })
     return res.status(502).json({ error: 'upstream_fetch_failed', detail: err.message })
   }
 
@@ -99,7 +100,6 @@ export default async function handler(req, res) {
       url,
       status: upstream.status,
       statusText: upstream.statusText,
-      usingOidc,
       audioMime,
       bytes: audio.length,
       detail: data,
