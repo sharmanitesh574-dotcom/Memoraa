@@ -449,6 +449,29 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
     }
   }, [history, buildSystemPrompt, authedFetch, memories])
 
+  // Pick the highest-quality voice we can find for the chosen language.
+  // Prefers neural / "Google" / "Microsoft" / "Premium" voices over basic ones.
+  const pickVoice = useCallback((lang) => {
+    const voices = voicesRef.current.length ? voicesRef.current : (synthRef.current.getVoices?.() || [])
+    if (!voices.length) return null
+    const base = lang.split('-')[0]
+    const score = (v) => {
+      let s = 0
+      if (v.lang === lang) s += 50
+      else if (v.lang?.startsWith(base + '-')) s += 30
+      else if (v.lang === base) s += 20
+      const name = (v.name || '').toLowerCase()
+      if (name.includes('neural')) s += 20
+      if (name.includes('natural')) s += 15
+      if (name.includes('premium') || name.includes('enhanced')) s += 12
+      if (name.includes('google')) s += 10
+      if (name.includes('microsoft')) s += 8
+      if (v.localService === false) s += 5 // remote voices are usually higher quality
+      return s
+    }
+    return [...voices].sort((a, b) => score(b) - score(a))[0] || null
+  }, [])
+
   // TTS
   const speak = useCallback((text) => {
     if (!text) return
@@ -457,15 +480,10 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
     const synth = synthRef.current
     synth.cancel()
 
-    const lang = profile.language
-    const voices = voicesRef.current.length ? voicesRef.current : (synth.getVoices?.() || [])
-    const exact = voices.find(v => v.lang === lang)
-    const base = lang.split('-')[0]
-    const fallback = voices.find(v => v.lang?.startsWith(base + '-') || v.lang === base)
-
     const u = new SpeechSynthesisUtterance(text)
-    u.lang = lang
-    if (exact || fallback) u.voice = exact || fallback
+    u.lang = profile.language
+    const voice = pickVoice(profile.language)
+    if (voice) u.voice = voice
     u.rate = 0.97
     u.pitch = 1.05
     u.onend = () => {
@@ -477,7 +495,24 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
       setStatusText('Tap the orb to speak')
     }
     synth.speak(u)
-  }, [profile.language])
+    // iOS / Chrome quirk: after speak(), some engines pause unless explicitly resumed
+    setTimeout(() => { try { synth.resume?.() } catch {} }, 50)
+  }, [profile.language, pickVoice])
+
+  // Prime the TTS engine on the first user gesture so iOS/Safari unlocks audio.
+  // Without this, the first reply often plays silently because speak() is no
+  // longer in the user-gesture chain by the time Claude responds.
+  const ttsPrimedRef = useRef(false)
+  const primeTTS = useCallback(() => {
+    if (ttsPrimedRef.current) return
+    ttsPrimedRef.current = true
+    try {
+      const u = new SpeechSynthesisUtterance(' ')
+      u.volume = 0
+      u.rate = 1
+      synthRef.current.speak(u)
+    } catch {}
+  }, [])
 
   // Start listening
   const startListening = useCallback(() => {
@@ -556,14 +591,16 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
   const sendText = useCallback(() => {
     const said = textInput.trim()
     if (!said) return
+    primeTTS()
     setTranscript(said)
     setTextInput('')
     setReply('')
     setError('')
     callClaude(said)
-  }, [textInput, callClaude])
+  }, [textInput, callClaude, primeTTS])
 
   const handleOrbTap = () => {
+    primeTTS()
     if (orbState === 'listening') {
       recognitionRef.current?.stop()
     } else if (orbState === 'speaking') {
