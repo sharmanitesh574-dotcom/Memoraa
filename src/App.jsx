@@ -1,6 +1,26 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import './index.css'
 
+// ── Supported languages ────────────────────────────────────────
+const LANGUAGES = [
+  { code: 'en-US', label: 'English (US)', native: 'English' },
+  { code: 'en-GB', label: 'English (UK)', native: 'English' },
+  { code: 'en-IN', label: 'English (India)', native: 'English' },
+  { code: 'hi-IN', label: 'Hindi', native: 'हिन्दी' },
+  { code: 'es-ES', label: 'Spanish', native: 'Español' },
+  { code: 'fr-FR', label: 'French', native: 'Français' },
+  { code: 'de-DE', label: 'German', native: 'Deutsch' },
+  { code: 'it-IT', label: 'Italian', native: 'Italiano' },
+  { code: 'pt-BR', label: 'Portuguese (BR)', native: 'Português' },
+  { code: 'ja-JP', label: 'Japanese', native: '日本語' },
+  { code: 'ko-KR', label: 'Korean', native: '한국어' },
+  { code: 'zh-CN', label: 'Chinese', native: '中文' },
+  { code: 'ar-SA', label: 'Arabic', native: 'العربية' },
+  { code: 'ru-RU', label: 'Russian', native: 'Русский' },
+]
+
+const DEFAULT_PROFILE = { name: '', language: 'en-US' }
+
 // ── Grain overlay ──────────────────────────────────────────────
 function GrainOverlay() {
   return (
@@ -205,10 +225,18 @@ export default function App() {
   const [memories, setMemories] = useState(() => {
     try { return JSON.parse(localStorage.getItem('memoraa_v1') || '[]') } catch { return [] }
   })
+  const [profile, setProfile] = useState(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem('memoraa_profile_v1') || 'null')
+      return raw ? { ...DEFAULT_PROFILE, ...raw } : DEFAULT_PROFILE
+    } catch { return DEFAULT_PROFILE }
+  })
   const [history, setHistory] = useState([])
   const [showInstallBanner, setShowInstallBanner] = useState(false)
   const [deferredPrompt, setDeferredPrompt] = useState(null)
   const [error, setError] = useState('')
+  const [textInput, setTextInput] = useState('')
+  const [voiceSupported, setVoiceSupported] = useState(true)
 
   const recognitionRef = useRef(null)
   const synthRef = useRef(window.speechSynthesis)
@@ -219,6 +247,17 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('memoraa_v1', JSON.stringify(memories))
   }, [memories])
+
+  // Persist profile
+  useEffect(() => {
+    localStorage.setItem('memoraa_profile_v1', JSON.stringify(profile))
+  }, [profile])
+
+  // Detect SpeechRecognition support once
+  useEffect(() => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    setVoiceSupported(!!SR)
+  }, [])
 
   // PWA install prompt
   useEffect(() => {
@@ -245,11 +284,15 @@ export default function App() {
       ? `\n\nWhat you remember about this person:\n${memories.slice(0, 40).map((m, i) => `${i + 1}. ${m}`).join('\n')}`
       : ''
 
-    return `You are Memoraa — a warm, perceptive personal AI companion. You speak like a trusted friend who truly listens.
+    const lang = LANGUAGES.find(l => l.code === profile.language) || LANGUAGES[0]
+    const nameLine = profile.name ? `\nThe user's name is ${profile.name}. Address them naturally by name when it feels right.` : ''
+    const langLine = `\nPreferred language: ${lang.label} (${lang.native}). Reply in this language by default, but match the user's language if they switch.`
+
+    return `You are Memoraa — a warm, perceptive personal AI companion. You speak like a trusted friend who truly listens.${nameLine}${langLine}
 
 Your rules:
 - Reply naturally, warmly, conversationally. Keep voice replies to 2-4 sentences max.
-- Detect and reply in the user's language (Hindi, English, Hinglish — match their style exactly)
+- Match the user's language and style exactly (Hindi, English, Hinglish, Spanish, etc.)
 - Extract meaningful personal facts: goals, preferences, life events, feelings, relationships
 - Never be generic. Reference what you know about them when relevant.
 - Never say "I'm an AI" unless directly asked${memBlock}
@@ -258,7 +301,7 @@ After your reply, on a NEW LINE, output this ONLY if something is genuinely wort
 MEMORY_JSON: {"remember": "concise third-person fact about the user"}
 
 Do not output MEMORY_JSON if nothing meaningful was shared. Never fabricate memories.`
-  }, [memories])
+  }, [memories, profile.name, profile.language])
 
   // Call Claude via Vercel edge function
   const callClaude = useCallback(async (userText) => {
@@ -318,6 +361,12 @@ Do not output MEMORY_JSON if nothing meaningful was shared. Never fabricate memo
     synthRef.current.cancel()
 
     const u = new SpeechSynthesisUtterance(text)
+    u.lang = profile.language
+    const voices = synthRef.current.getVoices?.() || []
+    const exact = voices.find(v => v.lang === profile.language)
+    const base = profile.language.split('-')[0]
+    const fallback = voices.find(v => v.lang?.startsWith(base + '-') || v.lang === base)
+    if (exact || fallback) u.voice = exact || fallback
     u.rate = 0.93
     u.pitch = 1.08
     u.onend = () => {
@@ -329,7 +378,7 @@ Do not output MEMORY_JSON if nothing meaningful was shared. Never fabricate memo
       setStatusText('Tap the orb to speak')
     }
     synthRef.current.speak(u)
-  }, [])
+  }, [profile.language])
 
   // Start listening
   const startListening = useCallback(() => {
@@ -337,7 +386,8 @@ Do not output MEMORY_JSON if nothing meaningful was shared. Never fabricate memo
 
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!SR) {
-      setError('Voice input not supported on this browser. Try Chrome.')
+      setVoiceSupported(false)
+      setError('Voice input not supported here. Use the text box below or open in Chrome.')
       return
     }
 
@@ -348,7 +398,7 @@ Do not output MEMORY_JSON if nothing meaningful was shared. Never fabricate memo
     recognitionRef.current = rec
     rec.continuous = false
     rec.interimResults = true
-    rec.lang = 'hi-IN'
+    rec.lang = profile.language
 
     rec.onstart = () => {
       isListeningRef.current = true
@@ -388,7 +438,17 @@ Do not output MEMORY_JSON if nothing meaningful was shared. Never fabricate memo
     }
 
     rec.start()
-  }, [transcript, callClaude])
+  }, [transcript, callClaude, profile.language])
+
+  const sendText = useCallback(() => {
+    const said = textInput.trim()
+    if (!said) return
+    setTranscript(said)
+    setTextInput('')
+    setReply('')
+    setError('')
+    callClaude(said)
+  }, [textInput, callClaude])
 
   const handleOrbTap = () => {
     if (orbState === 'listening') {
@@ -478,7 +538,7 @@ Do not output MEMORY_JSON if nothing meaningful was shared. Never fabricate memo
 
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <button
-              onClick={() => setView(v => v === 'home' ? 'memories' : 'home')}
+              onClick={() => setView(v => v === 'memories' ? 'home' : 'memories')}
               style={{
                 background: view === 'memories' ? 'rgba(0,229,255,0.1)' : 'var(--pill)',
                 border: `1px solid ${view === 'memories' ? 'rgba(0,229,255,0.25)' : 'var(--pill-border)'}`,
@@ -490,6 +550,21 @@ Do not output MEMORY_JSON if nothing meaningful was shared. Never fabricate memo
               }}
             >
               🧠 {memories.length}
+            </button>
+            <button
+              onClick={() => setView(v => v === 'profile' ? 'home' : 'profile')}
+              aria-label="Profile and settings"
+              style={{
+                background: view === 'profile' ? 'rgba(0,229,255,0.1)' : 'var(--pill)',
+                border: `1px solid ${view === 'profile' ? 'rgba(0,229,255,0.25)' : 'var(--pill-border)'}`,
+                borderRadius: 20, padding: '6px 12px',
+                color: view === 'profile' ? '#00e5ff' : 'var(--muted-light)',
+                fontSize: 12, fontFamily: "'Space Mono', monospace",
+                cursor: 'pointer', transition: 'all 0.25s',
+                display: 'flex', alignItems: 'center', gap: 6,
+              }}
+            >
+              {profile.name ? profile.name.slice(0, 1).toUpperCase() : '👤'}
             </button>
           </div>
         </div>
@@ -512,7 +587,7 @@ Do not output MEMORY_JSON if nothing meaningful was shared. Never fabricate memo
                 animation: 'shimmer 5s linear infinite',
                 marginBottom: 7, lineHeight: 1.2,
               }}>
-                Hey Memoraa.
+                {profile.name ? `Hey ${profile.name}.` : 'Hey Memoraa.'}
               </h1>
               <p style={{
                 color: 'var(--muted-light)', fontSize: 12.5, fontWeight: 300, letterSpacing: '0.01em',
@@ -552,6 +627,45 @@ Do not output MEMORY_JSON if nothing meaningful was shared. Never fabricate memo
             <div style={{ width: '100%', minHeight: 72 }}>
               <ReplyBubble text={reply} />
             </div>
+
+            {/* Text input fallback (always available) */}
+            <form
+              onSubmit={(e) => { e.preventDefault(); sendText() }}
+              style={{
+                width: '100%', display: 'flex', gap: 8, alignItems: 'center',
+                background: 'rgba(13,21,37,0.6)',
+                border: '1px solid rgba(0,212,255,0.12)',
+                borderRadius: 14, padding: '6px 6px 6px 14px',
+                backdropFilter: 'blur(8px)',
+              }}
+            >
+              <input
+                type="text"
+                value={textInput}
+                onChange={(e) => setTextInput(e.target.value)}
+                placeholder={voiceSupported ? 'Or type a message...' : 'Voice not supported — type here'}
+                disabled={orbState === 'thinking'}
+                style={{
+                  flex: 1, background: 'transparent', border: 'none', outline: 'none',
+                  color: 'var(--text)', fontFamily: "'Sora', sans-serif", fontSize: 14,
+                  padding: '8px 0',
+                }}
+              />
+              <button
+                type="submit"
+                disabled={!textInput.trim() || orbState === 'thinking'}
+                style={{
+                  background: textInput.trim() ? 'var(--cyan)' : 'rgba(255,255,255,0.06)',
+                  color: textInput.trim() ? '#000' : 'var(--muted-light)',
+                  border: 'none', borderRadius: 10, padding: '8px 14px',
+                  fontFamily: "'Sora', sans-serif", fontSize: 13, fontWeight: 600,
+                  cursor: textInput.trim() ? 'pointer' : 'default',
+                  transition: 'all 0.2s',
+                }}
+              >
+                Send
+              </button>
+            </form>
 
             {/* Footer */}
             <p style={{
@@ -635,6 +749,121 @@ Do not output MEMORY_JSON if nothing meaningful was shared. Never fabricate memo
                 ))
               )}
             </div>
+          </div>
+        )}
+
+        {/* ── PROFILE VIEW ── */}
+        {view === 'profile' && (
+          <div style={{
+            flex: 1, display: 'flex', flexDirection: 'column',
+            padding: '4px 24px 32px', overflowY: 'auto',
+            animation: 'fadeIn 0.3s ease', gap: 18,
+          }}>
+            <div>
+              <h2 style={{ fontSize: 18, fontWeight: 600, letterSpacing: '-0.4px' }}>
+                Profile
+              </h2>
+              <p style={{
+                fontSize: 11, color: 'var(--muted)', marginTop: 3,
+                fontFamily: "'Space Mono', monospace",
+              }}>
+                Personalize how Memoraa speaks to you
+              </p>
+            </div>
+
+            {/* Name field */}
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <span style={{
+                fontSize: 11, color: 'var(--muted-light)',
+                fontFamily: "'Space Mono', monospace",
+                letterSpacing: '0.08em', textTransform: 'uppercase',
+              }}>
+                Your name
+              </span>
+              <input
+                type="text"
+                value={profile.name}
+                onChange={(e) => setProfile(p => ({ ...p, name: e.target.value.slice(0, 40) }))}
+                placeholder="What should I call you?"
+                style={{
+                  background: 'rgba(13,21,37,0.6)',
+                  border: '1px solid rgba(0,212,255,0.15)',
+                  borderRadius: 12, padding: '12px 14px',
+                  color: 'var(--text)', fontFamily: "'Sora', sans-serif",
+                  fontSize: 14, outline: 'none',
+                }}
+              />
+            </label>
+
+            {/* Language picker */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <span style={{
+                fontSize: 11, color: 'var(--muted-light)',
+                fontFamily: "'Space Mono', monospace",
+                letterSpacing: '0.08em', textTransform: 'uppercase',
+              }}>
+                Language
+              </span>
+              <div style={{
+                display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8,
+              }}>
+                {LANGUAGES.map(l => {
+                  const selected = profile.language === l.code
+                  return (
+                    <button
+                      key={l.code}
+                      onClick={() => setProfile(p => ({ ...p, language: l.code }))}
+                      style={{
+                        background: selected ? 'rgba(0,229,255,0.1)' : 'rgba(13,21,37,0.6)',
+                        border: `1px solid ${selected ? 'rgba(0,229,255,0.35)' : 'rgba(255,255,255,0.07)'}`,
+                        borderRadius: 12, padding: '10px 12px',
+                        color: selected ? '#00e5ff' : 'var(--text)',
+                        fontFamily: "'Sora', sans-serif", fontSize: 12,
+                        cursor: 'pointer', textAlign: 'left',
+                        transition: 'all 0.2s',
+                        display: 'flex', flexDirection: 'column', gap: 2,
+                      }}
+                    >
+                      <span style={{ fontWeight: 600 }}>{l.native}</span>
+                      <span style={{
+                        fontSize: 10, color: 'var(--muted-light)',
+                        fontFamily: "'Space Mono', monospace",
+                      }}>
+                        {l.code}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* Voice status */}
+            <div style={{
+              background: voiceSupported ? 'rgba(0,229,255,0.05)' : 'rgba(255,170,0,0.05)',
+              border: `1px solid ${voiceSupported ? 'rgba(0,229,255,0.15)' : 'rgba(255,170,0,0.2)'}`,
+              borderRadius: 12, padding: '12px 14px',
+              display: 'flex', alignItems: 'center', gap: 10,
+            }}>
+              <span style={{ fontSize: 16 }}>{voiceSupported ? '🎙️' : '⚠️'}</span>
+              <div style={{ flex: 1 }}>
+                <p style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>
+                  {voiceSupported ? 'Voice input ready' : 'Voice input unavailable'}
+                </p>
+                <p style={{ fontSize: 11, color: 'var(--muted-light)', lineHeight: 1.5 }}>
+                  {voiceSupported
+                    ? 'Tap the orb to speak. Browser speech recognition is supported.'
+                    : 'This browser doesn\'t support speech recognition. Use the text box on the home screen, or open in Chrome.'}
+                </p>
+              </div>
+            </div>
+
+            <p style={{
+              fontSize: 10, color: 'var(--muted)',
+              fontFamily: "'Space Mono', monospace",
+              letterSpacing: '0.1em', textAlign: 'center', marginTop: 'auto', paddingTop: 18,
+            }}>
+              🔒 Profile stays on this device
+            </p>
           </div>
         )}
       </div>
