@@ -67,26 +67,43 @@ export default async function handler(req, res) {
   if (language) form.append('language', language)
   form.append('prompt', 'Casual conversation. May include English, Hindi, Hinglish, or other languages.')
 
+  const url = 'https://ai-gateway.vercel.sh/v1/audio/transcriptions'
+  const usingOidc = !process.env.AI_GATEWAY_API_KEY && !!process.env.VERCEL_OIDC_TOKEN
   let upstream
   try {
-    upstream = await fetch('https://ai-gateway.vercel.sh/v1/audio/transcriptions', {
+    upstream = await fetch(url, {
       method: 'POST',
       headers: { Authorization: `Bearer ${gatewayKey}` },
       body: form,
     })
   } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[transcribe] upstream fetch threw:', err.message, { url, usingOidc, audioMime, bytes: audio.length })
     return res.status(502).json({ error: 'upstream_fetch_failed', detail: err.message })
   }
 
   let data
+  let rawText = ''
   try {
-    data = await upstream.json()
+    rawText = await upstream.text()
+    data = JSON.parse(rawText)
   } catch {
-    const txt = await upstream.text().catch(() => '')
-    return res.status(502).json({ error: 'upstream_bad_json', detail: txt.slice(0, 500) })
+    // eslint-disable-next-line no-console
+    console.error('[transcribe] upstream non-json:', { status: upstream.status, body: rawText.slice(0, 500) })
+    return res.status(502).json({ error: 'upstream_bad_json', detail: rawText.slice(0, 500) })
   }
 
   if (!upstream.ok) {
+    // eslint-disable-next-line no-console
+    console.error('[transcribe] upstream rejected:', {
+      url,
+      status: upstream.status,
+      statusText: upstream.statusText,
+      usingOidc,
+      audioMime,
+      bytes: audio.length,
+      detail: data,
+    })
     return res.status(502).json({ error: 'transcribe_failed', status: upstream.status, detail: data })
   }
 

@@ -42,9 +42,11 @@ export default async function handler(req, res) {
   const gatewayKey = process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN
   if (!gatewayKey) return res.status(500).json({ error: 'AI Gateway not configured' })
 
+  const url = 'https://ai-gateway.vercel.sh/v1/audio/speech'
+  const usingOidc = !process.env.AI_GATEWAY_API_KEY && !!process.env.VERCEL_OIDC_TOKEN
   let upstream
   try {
-    upstream = await fetch('https://ai-gateway.vercel.sh/v1/audio/speech', {
+    upstream = await fetch(url, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${gatewayKey}`,
@@ -58,12 +60,24 @@ export default async function handler(req, res) {
       }),
     })
   } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[tts] upstream fetch threw:', err.message, { url, usingOidc })
     return res.status(502).json({ error: 'upstream_fetch_failed', detail: err.message })
   }
 
   if (!upstream.ok) {
     let detail = ''
     try { detail = await upstream.text() } catch {}
+    // eslint-disable-next-line no-console
+    console.error('[tts] upstream rejected:', {
+      url,
+      status: upstream.status,
+      statusText: upstream.statusText,
+      usingOidc,
+      model,
+      voice,
+      detail: detail.slice(0, 1000),
+    })
     return res.status(502).json({ error: 'tts_failed', status: upstream.status, detail: detail.slice(0, 500) })
   }
 
