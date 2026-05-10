@@ -699,16 +699,15 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
 
       try {
         const blob = new Blob(chunks, { type: mimeType || 'audio/webm' })
-        const ext = (mimeType.split('/')[1] || 'webm').split(';')[0]
-        const form = new FormData()
-        form.append('file', blob, `audio.${ext}`)
-        form.append('language', langRef.current || 'en')
-
+        const lang = encodeURIComponent(langRef.current || 'en')
         const token = await getToken()
-        const res = await fetch('/api/transcribe', {
+        const res = await fetch(`/api/transcribe?language=${lang}`, {
           method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
-          body: form,
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': blob.type || 'audio/webm',
+          },
+          body: blob,
         })
         if (!res.ok) {
           const detail = await res.text().catch(() => '')

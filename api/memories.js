@@ -3,6 +3,28 @@ import { neon } from '@neondatabase/serverless'
 
 const sql = neon(process.env.DATABASE_URL)
 
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+}
+
+function setCors(res) {
+  for (const [k, v] of Object.entries(corsHeaders)) res.setHeader(k, v)
+}
+
+async function userIdFromRequest(req) {
+  const auth = req.headers.authorization || ''
+  if (!auth.startsWith('Bearer ')) return null
+  const token = auth.slice(7)
+  try {
+    const payload = await verifyToken(token, { secretKey: process.env.CLERK_SECRET_KEY })
+    return payload.sub || null
+  } catch {
+    return null
+  }
+}
+
 let schemaReady = false
 async function ensureSchema() {
   if (schemaReady) return
@@ -16,47 +38,18 @@ async function ensureSchema() {
   schemaReady = true
 }
 
-async function userIdFromRequest(req) {
-  const auth = req.headers.get('authorization') || ''
-  if (!auth.startsWith('Bearer ')) return null
-  const token = auth.slice(7)
-  try {
-    const payload = await verifyToken(token, {
-      secretKey: process.env.CLERK_SECRET_KEY,
-    })
-    return payload.sub || null
-  } catch {
-    return null
-  }
-}
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-}
-
-const json = (data, status = 200) =>
-  new Response(JSON.stringify(data), {
-    status,
-    headers: { 'Content-Type': 'application/json', ...corsHeaders },
-  })
-
-export default async function handler(req) {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { status: 200, headers: corsHeaders })
-  }
+export default async function handler(req, res) {
+  setCors(res)
+  if (req.method === 'OPTIONS') return res.status(200).end()
 
   const userId = await userIdFromRequest(req)
-  if (!userId) return json({ error: 'unauthorized' }, 401)
+  if (!userId) return res.status(401).json({ error: 'unauthorized' })
 
   try {
     await ensureSchema()
   } catch (err) {
-    return json({ error: 'db_unavailable', detail: err.message }, 500)
+    return res.status(500).json({ error: 'db_unavailable', detail: err.message })
   }
-
-  const url = new URL(req.url)
 
   try {
     if (req.method === 'GET') {
@@ -67,13 +60,12 @@ export default async function handler(req) {
         ORDER BY created_at DESC
         LIMIT 200
       `
-      return json({ memories: rows })
+      return res.status(200).json({ memories: rows })
     }
 
     if (req.method === 'POST') {
-      const body = await req.json()
+      const body = req.body || {}
 
-      // Bulk insert (used for one-time localStorage migration)
       if (Array.isArray(body.facts)) {
         const facts = body.facts
           .filter(f => typeof f === 'string' && f.trim().length > 4)
@@ -87,32 +79,33 @@ export default async function handler(req) {
           WHERE user_id = ${userId}
           ORDER BY created_at DESC LIMIT 200
         `
-        return json({ memories: rows })
+        return res.status(200).json({ memories: rows })
       }
 
       const fact = (body.fact || '').toString().trim()
-      if (fact.length < 5) return json({ error: 'fact too short' }, 400)
+      if (fact.length < 5) return res.status(400).json({ error: 'fact too short' })
       const [row] = await sql`
         INSERT INTO memories (user_id, fact)
         VALUES (${userId}, ${fact})
         RETURNING id, fact, created_at
       `
-      return json({ memory: row })
+      return res.status(200).json({ memory: row })
     }
 
     if (req.method === 'DELETE') {
-      if (url.searchParams.get('all') === '1') {
+      const all = req.query?.all === '1'
+      if (all) {
         await sql`DELETE FROM memories WHERE user_id = ${userId}`
-        return json({ ok: true })
+        return res.status(200).json({ ok: true })
       }
-      const id = parseInt(url.searchParams.get('id') || '', 10)
-      if (!id) return json({ error: 'missing id' }, 400)
+      const id = parseInt(req.query?.id || '', 10)
+      if (!id) return res.status(400).json({ error: 'missing id' })
       await sql`DELETE FROM memories WHERE id = ${id} AND user_id = ${userId}`
-      return json({ ok: true })
+      return res.status(200).json({ ok: true })
     }
 
-    return new Response('Method not allowed', { status: 405, headers: corsHeaders })
+    return res.status(405).send('Method not allowed')
   } catch (err) {
-    return json({ error: 'server_error', detail: err.message }, 500)
+    return res.status(500).json({ error: 'server_error', detail: err.message })
   }
 }

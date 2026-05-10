@@ -1,13 +1,21 @@
 import { verifyToken } from '@clerk/backend'
 
+export const config = {
+  api: { bodyParser: false }, // we read raw audio bytes ourselves
+}
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 }
 
+function setCors(res) {
+  for (const [k, v] of Object.entries(corsHeaders)) res.setHeader(k, v)
+}
+
 async function userIdFromRequest(req) {
-  const auth = req.headers.get('authorization') || ''
+  const auth = req.headers.authorization || ''
   if (!auth.startsWith('Bearer ')) return null
   const token = auth.slice(7)
   try {
@@ -18,61 +26,69 @@ async function userIdFromRequest(req) {
   }
 }
 
-const json = (data, status = 200) =>
-  new Response(JSON.stringify(data), {
-    status,
-    headers: { 'Content-Type': 'application/json', ...corsHeaders },
-  })
+async function readBody(req) {
+  const chunks = []
+  for await (const chunk of req) chunks.push(chunk)
+  return Buffer.concat(chunks)
+}
 
-export default async function handler(req) {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { status: 200, headers: corsHeaders })
-  }
-  if (req.method !== 'POST') {
-    return new Response('Method not allowed', { status: 405, headers: corsHeaders })
-  }
+export default async function handler(req, res) {
+  setCors(res)
+  if (req.method === 'OPTIONS') return res.status(200).end()
+  if (req.method !== 'POST') return res.status(405).send('Method not allowed')
 
   const userId = await userIdFromRequest(req)
-  if (!userId) return json({ error: 'unauthorized' }, 401)
+  if (!userId) return res.status(401).json({ error: 'unauthorized' })
 
   const gatewayKey = process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN
-  if (!gatewayKey) return json({ error: 'AI Gateway not configured' }, 500)
+  if (!gatewayKey) return res.status(500).json({ error: 'AI Gateway not configured' })
 
-  let inForm
-  try { inForm = await req.formData() } catch { return json({ error: 'bad_multipart' }, 400) }
+  const audioMime = req.headers['content-type'] || 'audio/webm'
+  const language = ((req.query?.language || '').toString().split('-')[0]) || ''
+  const ext = audioMime.includes('mp4') ? 'mp4'
+    : audioMime.includes('ogg') ? 'ogg'
+    : audioMime.includes('mpeg') ? 'mp3'
+    : audioMime.includes('wav') ? 'wav'
+    : 'webm'
 
-  const file = inForm.get('file')
-  if (!file || typeof file === 'string') return json({ error: 'missing file' }, 400)
+  let audio
+  try {
+    audio = await readBody(req)
+  } catch (err) {
+    return res.status(400).json({ error: 'bad_body', detail: err.message })
+  }
+  if (!audio || audio.length < 1000) {
+    return res.status(400).json({ error: 'audio too small' })
+  }
 
-  const language = (inForm.get('language') || '').toString().split('-')[0] // 'en-US' -> 'en'
-
-  const upstreamForm = new FormData()
-  upstreamForm.append('file', file, file.name || 'audio.webm')
-  upstreamForm.append('model', 'openai/whisper-1')
-  if (language) upstreamForm.append('language', language)
-  // Useful for shaping the model toward the kind of speech we expect
-  upstreamForm.append('prompt', 'Casual conversation. May include English, Hindi, Hinglish, or other languages.')
+  const form = new FormData()
+  form.append('file', new Blob([audio], { type: audioMime }), `audio.${ext}`)
+  form.append('model', 'openai/whisper-1')
+  if (language) form.append('language', language)
+  form.append('prompt', 'Casual conversation. May include English, Hindi, Hinglish, or other languages.')
 
   let upstream
   try {
     upstream = await fetch('https://ai-gateway.vercel.sh/v1/audio/transcriptions', {
       method: 'POST',
       headers: { Authorization: `Bearer ${gatewayKey}` },
-      body: upstreamForm,
+      body: form,
     })
   } catch (err) {
-    return json({ error: 'upstream_fetch_failed', detail: err.message }, 502)
+    return res.status(502).json({ error: 'upstream_fetch_failed', detail: err.message })
   }
 
   let data
-  try { data = await upstream.json() } catch {
+  try {
+    data = await upstream.json()
+  } catch {
     const txt = await upstream.text().catch(() => '')
-    return json({ error: 'upstream_bad_json', detail: txt.slice(0, 500) }, 502)
+    return res.status(502).json({ error: 'upstream_bad_json', detail: txt.slice(0, 500) })
   }
 
   if (!upstream.ok) {
-    return json({ error: 'transcribe_failed', status: upstream.status, detail: data }, 502)
+    return res.status(502).json({ error: 'transcribe_failed', status: upstream.status, detail: data })
   }
 
-  return json({ text: (data.text || '').trim() })
+  return res.status(200).json({ text: (data.text || '').trim() })
 }

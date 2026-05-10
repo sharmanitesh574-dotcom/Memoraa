@@ -1,4 +1,5 @@
 import { verifyToken } from '@clerk/backend'
+import { Readable } from 'node:stream'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -6,8 +7,12 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 }
 
+function setCors(res) {
+  for (const [k, v] of Object.entries(corsHeaders)) res.setHeader(k, v)
+}
+
 async function userIdFromRequest(req) {
-  const auth = req.headers.get('authorization') || ''
+  const auth = req.headers.authorization || ''
   if (!auth.startsWith('Bearer ')) return null
   const token = auth.slice(7)
   try {
@@ -18,35 +23,24 @@ async function userIdFromRequest(req) {
   }
 }
 
-const json = (data, status = 200) =>
-  new Response(JSON.stringify(data), {
-    status,
-    headers: { 'Content-Type': 'application/json', ...corsHeaders },
-  })
-
-export default async function handler(req) {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { status: 200, headers: corsHeaders })
-  }
-  if (req.method !== 'POST') {
-    return new Response('Method not allowed', { status: 405, headers: corsHeaders })
-  }
+export default async function handler(req, res) {
+  setCors(res)
+  if (req.method === 'OPTIONS') return res.status(200).end()
+  if (req.method !== 'POST') return res.status(405).send('Method not allowed')
 
   const userId = await userIdFromRequest(req)
-  if (!userId) return json({ error: 'unauthorized' }, 401)
+  if (!userId) return res.status(401).json({ error: 'unauthorized' })
 
-  let body
-  try { body = await req.json() } catch { return json({ error: 'bad_json' }, 400) }
-
+  const body = req.body || {}
   const text = (body.text || '').toString().trim()
-  if (!text) return json({ error: 'missing text' }, 400)
-  if (text.length > 4000) return json({ error: 'text too long' }, 400)
+  if (!text) return res.status(400).json({ error: 'missing text' })
+  if (text.length > 4000) return res.status(400).json({ error: 'text too long' })
 
   const voice = (body.voice || 'nova').toString()
   const model = (body.model || 'openai/tts-1').toString()
 
   const gatewayKey = process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN
-  if (!gatewayKey) return json({ error: 'AI Gateway not configured' }, 500)
+  if (!gatewayKey) return res.status(500).json({ error: 'AI Gateway not configured' })
 
   let upstream
   try {
@@ -64,21 +58,23 @@ export default async function handler(req) {
       }),
     })
   } catch (err) {
-    return json({ error: 'upstream_fetch_failed', detail: err.message }, 502)
+    return res.status(502).json({ error: 'upstream_fetch_failed', detail: err.message })
   }
 
   if (!upstream.ok) {
     let detail = ''
     try { detail = await upstream.text() } catch {}
-    return json({ error: 'tts_failed', status: upstream.status, detail: detail.slice(0, 500) }, 502)
+    return res.status(502).json({ error: 'tts_failed', status: upstream.status, detail: detail.slice(0, 500) })
   }
 
-  return new Response(upstream.body, {
-    status: 200,
-    headers: {
-      'Content-Type': upstream.headers.get('content-type') || 'audio/mpeg',
-      'Cache-Control': 'no-store',
-      ...corsHeaders,
-    },
-  })
+  res.setHeader('Content-Type', upstream.headers.get('content-type') || 'audio/mpeg')
+  res.setHeader('Cache-Control', 'no-store')
+  res.status(200)
+
+  if (upstream.body && Readable.fromWeb) {
+    Readable.fromWeb(upstream.body).pipe(res)
+  } else {
+    const buf = Buffer.from(await upstream.arrayBuffer())
+    res.end(buf)
+  }
 }
