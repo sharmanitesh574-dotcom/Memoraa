@@ -4,3 +4,9 @@ dist
 .env.local
 .DS_Store
 *.local
+
+.vercel
+.env*.local
+.env.production
+.env.preview
+.claude/

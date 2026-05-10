@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { useAuth, useUser, useClerk } from '@clerk/clerk-react'
+import Auth from './Auth.jsx'
 import './index.css'
 
 // ── Supported languages ────────────────────────────────────────
@@ -151,7 +153,7 @@ function Orb({ state, onClick }) {
 }
 
 // ── Memory chip ────────────────────────────────────────────────
-function MemoryChip({ text, index, onDelete }) {
+function MemoryChip({ id, text, index, onDelete }) {
   const [hovering, setHovering] = useState(false)
 
   return (
@@ -181,7 +183,7 @@ function MemoryChip({ text, index, onDelete }) {
         </div>
         {hovering && (
           <button
-            onClick={() => onDelete(index)}
+            onClick={() => onDelete(id)}
             style={{
               background: 'rgba(255,60,60,0.1)', border: '1px solid rgba(255,60,60,0.2)',
               borderRadius: 6, padding: '3px 7px', color: 'rgba(255,100,100,0.7)',
@@ -217,14 +219,34 @@ function ReplyBubble({ text }) {
 
 // ── Main App ───────────────────────────────────────────────────
 export default function App() {
+  const { isLoaded, isSignedIn, getToken } = useAuth()
+
+  if (!isLoaded) {
+    return (
+      <div style={{ height: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ width: 36, height: 36, borderRadius: '50%',
+          border: '2px solid rgba(0,229,255,0.2)', borderTopColor: '#00e5ff',
+          animation: 'thinking 1s linear infinite' }} />
+      </div>
+    )
+  }
+
+  if (!isSignedIn) return <Auth />
+
+  return <MemoraaApp getToken={getToken} />
+}
+
+function MemoraaApp({ getToken }) {
+  const { user } = useUser()
+  const { signOut } = useClerk()
+
   const [orbState, setOrbState] = useState('idle')
   const [transcript, setTranscript] = useState('')
   const [reply, setReply] = useState('')
   const [view, setView] = useState('home')
   const [statusText, setStatusText] = useState('Tap the orb to speak')
-  const [memories, setMemories] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('memoraa_v1') || '[]') } catch { return [] }
-  })
+  const [memories, setMemories] = useState([]) // [{ id, fact, created_at }]
+  const [memoriesLoaded, setMemoriesLoaded] = useState(false)
   const [profile, setProfile] = useState(() => {
     try {
       const raw = JSON.parse(localStorage.getItem('memoraa_profile_v1') || 'null')
@@ -246,10 +268,54 @@ export default function App() {
   const langRef = useRef(profile.language)
   langRef.current = profile.language
 
-  // Persist memories
+  // Auth-aware fetch helper
+  const authedFetch = useCallback(async (input, init = {}) => {
+    const token = await getToken()
+    const headers = new Headers(init.headers || {})
+    headers.set('Content-Type', 'application/json')
+    if (token) headers.set('Authorization', `Bearer ${token}`)
+    return fetch(input, { ...init, headers })
+  }, [getToken])
+
+  // Load memories from server, with one-time migration of any local cache
   useEffect(() => {
-    localStorage.setItem('memoraa_v1', JSON.stringify(memories))
-  }, [memories])
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await authedFetch('/api/memories')
+        if (!res.ok) throw new Error(`status ${res.status}`)
+        const { memories: rows } = await res.json()
+        let list = Array.isArray(rows) ? rows : []
+
+        const migrated = localStorage.getItem('memoraa_migrated_v1') === '1'
+        if (!migrated) {
+          let local = []
+          try { local = JSON.parse(localStorage.getItem('memoraa_v1') || '[]') } catch {}
+          if (list.length === 0 && Array.isArray(local) && local.length > 0) {
+            const facts = local.filter(x => typeof x === 'string')
+            const r2 = await authedFetch('/api/memories', {
+              method: 'POST',
+              body: JSON.stringify({ facts }),
+            })
+            if (r2.ok) {
+              const { memories: rows2 } = await r2.json()
+              list = Array.isArray(rows2) ? rows2 : list
+            }
+          }
+          localStorage.setItem('memoraa_migrated_v1', '1')
+          localStorage.removeItem('memoraa_v1')
+        }
+
+        if (!cancelled) {
+          setMemories(list)
+          setMemoriesLoaded(true)
+        }
+      } catch {
+        if (!cancelled) setMemoriesLoaded(true)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [authedFetch])
 
   // Persist profile
   useEffect(() => {
@@ -300,7 +366,7 @@ export default function App() {
   // System prompt
   const buildSystemPrompt = useCallback(() => {
     const memBlock = memories.length > 0
-      ? `\n\nWhat you remember about this person:\n${memories.slice(0, 40).map((m, i) => `${i + 1}. ${m}`).join('\n')}`
+      ? `\n\nWhat you remember about this person:\n${memories.slice(0, 40).map((m, i) => `${i + 1}. ${m.fact}`).join('\n')}`
       : ''
 
     const lang = LANGUAGES.find(l => l.code === profile.language) || LANGUAGES[0]
@@ -331,9 +397,8 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
     const newHistory = [...history, { role: 'user', content: userText }]
 
     try {
-      const res = await fetch('/api/chat', {
+      const res = await authedFetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: 'claude-haiku-4-5-20251001',
           max_tokens: 400,
@@ -354,12 +419,19 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
       if (memMatch) {
         try {
           const { remember } = JSON.parse(memMatch[1])
-          if (remember && typeof remember === 'string' && remember.trim().length > 4) {
-            setMemories(prev => {
-              const fact = remember.trim()
-              if (prev.some(m => m.toLowerCase() === fact.toLowerCase())) return prev
-              return [fact, ...prev].slice(0, 150)
-            })
+          const fact = (remember || '').toString().trim()
+          if (fact.length > 4) {
+            const dup = memories.some(m => m.fact?.toLowerCase() === fact.toLowerCase())
+            if (!dup) {
+              authedFetch('/api/memories', {
+                method: 'POST',
+                body: JSON.stringify({ fact }),
+              }).then(async r => {
+                if (!r.ok) return
+                const { memory } = await r.json()
+                if (memory) setMemories(prev => [memory, ...prev].slice(0, 200))
+              }).catch(() => {})
+            }
           }
         } catch {}
       }
@@ -375,7 +447,7 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
       setOrbState('idle')
       setStatusText('Tap the orb to speak')
     }
-  }, [history, buildSystemPrompt])
+  }, [history, buildSystemPrompt, authedFetch, memories])
 
   // TTS
   const speak = useCallback((text) => {
@@ -503,16 +575,25 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
     }
   }
 
-  const deleteMemory = (index) => {
-    setMemories(prev => prev.filter((_, i) => i !== index))
-  }
+  const deleteMemory = useCallback(async (id) => {
+    const prev = memories
+    setMemories(prev.filter(m => m.id !== id))
+    try {
+      const r = await authedFetch(`/api/memories?id=${encodeURIComponent(id)}`, { method: 'DELETE' })
+      if (!r.ok) setMemories(prev) // rollback on failure
+    } catch { setMemories(prev) }
+  }, [memories, authedFetch])
 
-  const clearAll = () => {
-    if (confirm('Clear all memories? This cannot be undone.')) {
-      setMemories([])
-      setHistory([])
-    }
-  }
+  const clearAll = useCallback(async () => {
+    if (!confirm('Clear all memories? This cannot be undone.')) return
+    const prev = memories
+    setMemories([])
+    setHistory([])
+    try {
+      const r = await authedFetch('/api/memories?all=1', { method: 'DELETE' })
+      if (!r.ok) setMemories(prev)
+    } catch { setMemories(prev) }
+  }, [memories, authedFetch])
 
   return (
     <div style={{ position: 'relative', height: '100dvh', overflow: 'hidden' }}>
@@ -751,7 +832,7 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
                   fontSize: 11, color: 'var(--muted)', marginTop: 3,
                   fontFamily: "'Space Mono', monospace",
                 }}>
-                  {memories.length} {memories.length === 1 ? 'memory' : 'memories'} · local to this device
+                  {memories.length} {memories.length === 1 ? 'memory' : 'memories'} · synced to your account
                 </p>
               </div>
               {memories.length > 0 && (
@@ -800,7 +881,7 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
                 </div>
               ) : (
                 memories.map((m, i) => (
-                  <MemoryChip key={`${i}-${m.slice(0,10)}`} text={m} index={i} onDelete={deleteMemory} />
+                  <MemoryChip key={m.id} id={m.id} text={m.fact} index={i} onDelete={deleteMemory} />
                 ))
               )}
             </div>
@@ -824,6 +905,39 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
               }}>
                 Personalize how Memoraa speaks to you
               </p>
+            </div>
+
+            {/* Account card */}
+            <div style={{
+              background: 'rgba(0,229,255,0.04)',
+              border: '1px solid rgba(0,229,255,0.15)',
+              borderRadius: 14, padding: '14px 16px',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+            }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ fontSize: 10, color: 'var(--muted)', fontFamily: "'Space Mono', monospace", letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>
+                  Signed in as
+                </p>
+                <p style={{ fontSize: 14, fontWeight: 600, color: '#00e5ff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  @{user?.username || 'user'}
+                </p>
+                <p style={{ fontSize: 11, color: 'var(--muted-light)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {user?.primaryEmailAddress?.emailAddress || user?.primaryPhoneNumber?.phoneNumber || ''}
+                </p>
+              </div>
+              <button
+                onClick={() => signOut()}
+                style={{
+                  background: 'rgba(255,60,60,0.07)',
+                  border: '1px solid rgba(255,60,60,0.22)',
+                  borderRadius: 10, padding: '8px 14px',
+                  color: 'rgba(255,120,120,0.85)',
+                  fontFamily: "'Space Mono', monospace", fontSize: 11,
+                  cursor: 'pointer', flexShrink: 0,
+                }}
+              >
+                Sign out
+              </button>
             </div>
 
             {/* Name field */}
@@ -917,7 +1031,7 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
               fontFamily: "'Space Mono', monospace",
               letterSpacing: '0.1em', textAlign: 'center', marginTop: 'auto', paddingTop: 18,
             }}>
-              🔒 Profile stays on this device
+              🔒 Profile stays in your account
             </p>
           </div>
         )}
