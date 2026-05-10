@@ -268,6 +268,12 @@ function MemoraaApp({ getToken }) {
   const langRef = useRef(profile.language)
   langRef.current = profile.language
 
+  // Whisper / OpenAI-TTS plumbing
+  const recorderRef = useRef(null)
+  const recordedChunksRef = useRef([])
+  const mediaStreamRef = useRef(null)
+  const audioPlayerRef = useRef(null)
+
   // Auth-aware fetch helper
   const authedFetch = useCallback(async (input, init = {}) => {
     const token = await getToken()
@@ -338,9 +344,12 @@ function MemoraaApp({ getToken }) {
     return () => synth.removeEventListener?.('voiceschanged', load)
   }, [])
 
-  // Stop any running recognition on unmount
+  // Stop any running audio capture/playback on unmount
   useEffect(() => () => {
     try { recognitionRef.current?.abort?.() } catch {}
+    try { recorderRef.current?.stop?.() } catch {}
+    try { mediaStreamRef.current?.getTracks?.().forEach(t => t.stop()) } catch {}
+    try { audioPlayerRef.current?.pause?.() } catch {}
     try { synthRef.current?.cancel?.() } catch {}
   }, [])
 
@@ -472,8 +481,8 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
     return [...voices].sort((a, b) => score(b) - score(a))[0] || null
   }, [])
 
-  // TTS
-  const speak = useCallback((text) => {
+  // Browser-TTS fallback (used when /api/tts is unreachable)
+  const browserSpeak = useCallback((text) => {
     if (!text) return
     setOrbState('speaking')
     setStatusText('Speaking...')
@@ -495,9 +504,69 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
       setStatusText('Tap the orb to speak')
     }
     synth.speak(u)
-    // iOS / Chrome quirk: after speak(), some engines pause unless explicitly resumed
     setTimeout(() => { try { synth.resume?.() } catch {} }, 50)
   }, [profile.language, pickVoice])
+
+  // High-quality TTS via /api/tts (OpenAI tts-1 through Vercel AI Gateway)
+  const speak = useCallback(async (text) => {
+    if (!text) return
+    setOrbState('speaking')
+    setStatusText('Speaking...')
+
+    // Cancel any in-flight playback
+    if (audioPlayerRef.current) {
+      try {
+        audioPlayerRef.current.pause()
+        audioPlayerRef.current.src = ''
+      } catch {}
+      audioPlayerRef.current = null
+    }
+    synthRef.current.cancel()
+
+    try {
+      const token = await getToken()
+      const res = await fetch('/api/tts', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ text, voice: 'nova' }),
+      })
+
+      if (!res.ok) {
+        const detail = await res.text().catch(() => '')
+        // eslint-disable-next-line no-console
+        console.warn('[memoraa] /api/tts failed, falling back to browser TTS', res.status, detail.slice(0, 200))
+        browserSpeak(text)
+        return
+      }
+
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const audio = new Audio(url)
+      audioPlayerRef.current = audio
+
+      const cleanup = () => {
+        URL.revokeObjectURL(url)
+        if (audioPlayerRef.current === audio) audioPlayerRef.current = null
+        setOrbState('idle')
+        setStatusText('Tap the orb to speak')
+      }
+      audio.onended = cleanup
+      audio.onerror = () => {
+        cleanup()
+        // Last-resort fallback
+        browserSpeak(text)
+      }
+
+      await audio.play()
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[memoraa] TTS error, falling back to browser TTS:', err)
+      browserSpeak(text)
+    }
+  }, [getToken, browserSpeak])
 
   // Prime the TTS engine on the first user gesture so iOS/Safari unlocks audio.
   // Without this, the first reply often plays silently because speak() is no
@@ -514,79 +583,175 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
     } catch {}
   }, [])
 
-  // Start listening
-  const startListening = useCallback(() => {
+  // Whisper-based recording — primary path. Captures audio with MediaRecorder,
+  // posts to /api/transcribe, then runs the transcript through callClaude.
+  const startListening = useCallback(async () => {
     if (isListeningRef.current) return
 
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SR) {
-      setVoiceSupported(false)
-      setError('Voice input not supported here. Use the text box below or open in Chrome.')
+    const hasMediaRecorder =
+      typeof window !== 'undefined' &&
+      typeof window.MediaRecorder !== 'undefined' &&
+      navigator.mediaDevices?.getUserMedia
+
+    if (!hasMediaRecorder) {
+      // Fallback: browser SpeechRecognition (legacy path)
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+      if (!SR) {
+        setVoiceSupported(false)
+        setError('Voice input not supported here. Use the text box below or open in Chrome.')
+        return
+      }
+      try { recognitionRef.current?.abort?.() } catch {}
+      synthRef.current.cancel()
+      finalTranscriptRef.current = ''
+      const rec = new SR()
+      recognitionRef.current = rec
+      rec.continuous = false
+      rec.interimResults = true
+      rec.lang = langRef.current
+      rec.onstart = () => {
+        isListeningRef.current = true
+        setOrbState('listening'); setStatusText('Listening...')
+        setReply(''); setTranscript(''); setError('')
+      }
+      rec.onresult = (e) => {
+        let final = '', interim = ''
+        for (let i = 0; i < e.results.length; i++) {
+          if (e.results[i].isFinal) final += e.results[i][0].transcript
+          else interim += e.results[i][0].transcript
+        }
+        finalTranscriptRef.current = final
+        setTranscript(final || interim)
+      }
+      rec.onend = () => {
+        isListeningRef.current = false
+        if (recognitionRef.current === rec) recognitionRef.current = null
+        const said = finalTranscriptRef.current.trim()
+        if (said) callClaude(said)
+        else { setOrbState('idle'); setStatusText('Tap the orb to speak') }
+      }
+      rec.onerror = (e) => {
+        isListeningRef.current = false
+        if (recognitionRef.current === rec) recognitionRef.current = null
+        if (e.error === 'not-allowed') setError('Microphone blocked.')
+        else if (e.error !== 'no-speech' && e.error !== 'aborted') setError("Couldn't hear you. Try again.")
+        setOrbState('idle'); setStatusText('Tap the orb to speak')
+      }
+      try { rec.start() } catch { setError('Voice is busy. Tap again.'); setOrbState('idle') }
       return
     }
 
-    // Tear down any prior session before starting a new one
-    try { recognitionRef.current?.abort?.() } catch {}
+    // Cancel any in-flight TTS so the mic isn't competing with audio
+    if (audioPlayerRef.current) {
+      try { audioPlayerRef.current.pause(); audioPlayerRef.current.src = '' } catch {}
+      audioPlayerRef.current = null
+    }
     synthRef.current.cancel()
-    finalTranscriptRef.current = ''
 
-    const rec = new SR()
-    recognitionRef.current = rec
-    rec.continuous = false
-    rec.interimResults = true
-    rec.lang = langRef.current
-
-    rec.onstart = () => {
-      isListeningRef.current = true
-      setOrbState('listening')
-      setStatusText('Listening...')
-      setReply('')
-      setTranscript('')
-      setError('')
+    let stream
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      })
+    } catch (err) {
+      setError('Microphone access denied. Allow mic in browser settings.')
+      return
     }
 
-    rec.onresult = (e) => {
-      let final = '', interim = ''
-      for (let i = 0; i < e.results.length; i++) {
-        if (e.results[i].isFinal) final += e.results[i][0].transcript
-        else interim += e.results[i][0].transcript
-      }
-      finalTranscriptRef.current = final
-      setTranscript(final || interim)
+    const mimeCandidates = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/mp4',
+      'audio/ogg;codecs=opus',
+    ]
+    const mimeType = mimeCandidates.find(m => MediaRecorder.isTypeSupported?.(m)) || ''
+
+    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+    recorderRef.current = recorder
+    mediaStreamRef.current = stream
+    recordedChunksRef.current = []
+
+    recorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) recordedChunksRef.current.push(e.data)
     }
 
-    rec.onend = () => {
+    recorder.onstop = async () => {
       isListeningRef.current = false
-      if (recognitionRef.current === rec) recognitionRef.current = null
-      const said = finalTranscriptRef.current.trim()
-      if (said) {
-        callClaude(said)
-      } else {
+      if (recorderRef.current === recorder) recorderRef.current = null
+      try { stream.getTracks().forEach(t => t.stop()) } catch {}
+      mediaStreamRef.current = null
+
+      const chunks = recordedChunksRef.current
+      const totalBytes = chunks.reduce((n, c) => n + c.size, 0)
+      if (totalBytes < 1500) {
+        // Probably a tap-cancel or no speech captured
+        setOrbState('idle')
+        setStatusText('Tap the orb to speak')
+        return
+      }
+
+      setOrbState('thinking')
+      setStatusText('Transcribing...')
+
+      try {
+        const blob = new Blob(chunks, { type: mimeType || 'audio/webm' })
+        const ext = (mimeType.split('/')[1] || 'webm').split(';')[0]
+        const form = new FormData()
+        form.append('file', blob, `audio.${ext}`)
+        form.append('language', langRef.current || 'en')
+
+        const token = await getToken()
+        const res = await fetch('/api/transcribe', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+          body: form,
+        })
+        if (!res.ok) {
+          const detail = await res.text().catch(() => '')
+          throw new Error(`transcribe ${res.status}: ${detail.slice(0, 200)}`)
+        }
+        const { text } = await res.json()
+        const said = (text || '').trim()
+        if (said) {
+          setTranscript(said)
+          callClaude(said)
+        } else {
+          setOrbState('idle')
+          setStatusText('Tap the orb to speak')
+        }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('[memoraa] transcribe failed:', err)
+        setError("Couldn't transcribe that. Try again.")
         setOrbState('idle')
         setStatusText('Tap the orb to speak')
       }
     }
 
-    rec.onerror = (e) => {
+    recorder.onerror = () => {
       isListeningRef.current = false
-      if (recognitionRef.current === rec) recognitionRef.current = null
-      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-        setError('Microphone blocked. Allow mic access in browser settings.')
-      } else if (e.error !== 'no-speech' && e.error !== 'aborted') {
-        setError("Couldn't hear you. Try again.")
-      }
+      try { stream.getTracks().forEach(t => t.stop()) } catch {}
+      setError('Recording error. Try again.')
       setOrbState('idle')
       setStatusText('Tap the orb to speak')
     }
 
     try {
-      rec.start()
-    } catch {
-      isListeningRef.current = false
-      setError('Voice is busy. Tap again.')
+      recorder.start()
+      isListeningRef.current = true
+      setOrbState('listening')
+      setStatusText('Listening… tap to stop')
+      setReply(''); setTranscript(''); setError('')
+    } catch (err) {
+      try { stream.getTracks().forEach(t => t.stop()) } catch {}
+      setError('Could not start recording.')
       setOrbState('idle')
     }
-  }, [callClaude])
+  }, [callClaude, getToken])
 
   const sendText = useCallback(() => {
     const said = textInput.trim()
@@ -602,8 +767,15 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
   const handleOrbTap = () => {
     primeTTS()
     if (orbState === 'listening') {
-      recognitionRef.current?.stop()
+      // Stop whichever path is running
+      try { recorderRef.current?.stop() } catch {}
+      try { recognitionRef.current?.stop() } catch {}
     } else if (orbState === 'speaking') {
+      // Cancel API audio + browser TTS
+      if (audioPlayerRef.current) {
+        try { audioPlayerRef.current.pause(); audioPlayerRef.current.src = '' } catch {}
+        audioPlayerRef.current = null
+      }
       synthRef.current.cancel()
       setOrbState('idle')
       setStatusText('Tap the orb to speak')
