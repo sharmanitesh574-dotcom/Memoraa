@@ -43,7 +43,7 @@ function lastUserText(messages) {
 
 async function retrieveMemories(userId, queryText) {
   const recentP = sql`
-    SELECT id, fact FROM memories
+    SELECT id, fact, category, due_at FROM memories
     WHERE user_id = ${userId}
     ORDER BY created_at DESC
     LIMIT 4
@@ -54,7 +54,7 @@ async function retrieveMemories(userId, queryText) {
     const embeds = await embedTexts([queryText])
     if (embeds) {
       semanticP = sql`
-        SELECT id, fact FROM memories
+        SELECT id, fact, category, due_at FROM memories
         WHERE user_id = ${userId} AND embedding IS NOT NULL
         ORDER BY embedding <=> ${vecLiteral(embeds[0])}::vector
         LIMIT 8
@@ -68,9 +68,19 @@ async function retrieveMemories(userId, queryText) {
   for (const r of [...semantic, ...recent]) {
     if (seen.has(r.id)) continue
     seen.add(r.id)
-    merged.push(r.fact)
+    merged.push(r)
   }
   return merged
+}
+
+function formatFact(m) {
+  const parts = [m.fact]
+  if (m.category) parts.push(`[${m.category}]`)
+  if (m.due_at) {
+    const d = new Date(m.due_at)
+    if (!isNaN(d)) parts.push(`(due ${d.toISOString().slice(0, 10)})`)
+  }
+  return parts.join(' ')
 }
 
 export default async function handler(req, res) {
@@ -89,10 +99,10 @@ export default async function handler(req, res) {
 
   try {
     const queryText = lastUserText(body.messages)
-    const facts = await retrieveMemories(userId, queryText)
-    if (facts.length > 0) {
-      const block = '\n\nWhat you remember about this person:\n' +
-        facts.map((f, i) => `${i + 1}. ${f}`).join('\n')
+    const memories = await retrieveMemories(userId, queryText)
+    if (memories.length > 0) {
+      const block = '\n\nWhat you remember about this person (each line may be tagged with [category] and (due YYYY-MM-DD) when relevant):\n' +
+        memories.map((m, i) => `${i + 1}. ${formatFact(m)}`).join('\n')
       const baseSys = typeof body.system === 'string' ? body.system : ''
       body.system = baseSys + block
     }

@@ -36,6 +36,7 @@ async function ensureSchema() {
     delivered_at TIMESTAMPTZ,
     dismissed_at TIMESTAMPTZ
   )`
+  await sql`ALTER TABLE nudges ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'checkin'`
   schemaReady = true
 }
 
@@ -55,7 +56,7 @@ export default async function handler(req, res) {
   try {
     if (req.method === 'GET') {
       const rows = await sql`
-        SELECT id, prompt, created_at
+        SELECT id, prompt, kind, created_at
         FROM nudges
         WHERE user_id = ${userId}
           AND delivered_at IS NULL

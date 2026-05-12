@@ -175,8 +175,32 @@ function Orb({ state, onClick }) {
 }
 
 // ── Memory chip ────────────────────────────────────────────────
-function MemoryChip({ id, text, index, onDelete }) {
+const CATEGORY_META = {
+  person: { icon: '👤', color: 'rgba(255,180,120,0.85)' },
+  event: { icon: '📅', color: 'rgba(255,140,200,0.85)' },
+  preference: { icon: '⭐', color: 'rgba(255,220,120,0.85)' },
+  goal: { icon: '🎯', color: 'rgba(120,220,180,0.85)' },
+  feeling: { icon: '💭', color: 'rgba(180,160,255,0.85)' },
+  todo: { icon: '✅', color: 'rgba(120,200,255,0.85)' },
+  health: { icon: '🩺', color: 'rgba(255,140,140,0.85)' },
+  other: { icon: '·', color: 'rgba(200,200,200,0.85)' },
+}
+
+function MemoryChip({ id, text, category, dueAt, index, onDelete }) {
   const [hovering, setHovering] = useState(false)
+  const meta = (category && CATEGORY_META[category]) || null
+  const dueLabel = (() => {
+    if (!dueAt) return null
+    const d = new Date(dueAt)
+    if (isNaN(d)) return null
+    const diff = Math.round((d - Date.now()) / 86400000)
+    if (diff < -1) return `${Math.abs(diff)}d ago`
+    if (diff === -1) return 'yesterday'
+    if (diff === 0) return 'today'
+    if (diff === 1) return 'tomorrow'
+    if (diff < 7) return `in ${diff}d`
+    return d.toISOString().slice(0, 10)
+  })()
 
   return (
     <div
@@ -193,12 +217,32 @@ function MemoryChip({ id, text, index, onDelete }) {
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
         <div style={{ flex: 1 }}>
-          <span style={{
-            color: 'rgba(0,229,255,0.45)', fontFamily: "'Space Mono', monospace",
-            fontSize: 9, display: 'block', marginBottom: 5, letterSpacing: '0.08em',
-          }}>
-            MEM·{String(index + 1).padStart(3, '0')}
-          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
+            <span style={{
+              color: 'rgba(0,229,255,0.45)', fontFamily: "'Space Mono', monospace",
+              fontSize: 9, letterSpacing: '0.08em',
+            }}>
+              MEM·{String(index + 1).padStart(3, '0')}
+            </span>
+            {meta && (
+              <span style={{
+                fontSize: 9, fontFamily: "'Space Mono', monospace",
+                color: meta.color, letterSpacing: '0.05em', textTransform: 'uppercase',
+              }}>
+                {meta.icon} {category}
+              </span>
+            )}
+            {dueLabel && (
+              <span style={{
+                fontSize: 9, fontFamily: "'Space Mono', monospace",
+                color: 'rgba(255,200,120,0.85)', letterSpacing: '0.05em',
+                background: 'rgba(255,200,120,0.08)',
+                padding: '1px 6px', borderRadius: 6,
+              }}>
+                {dueLabel}
+              </span>
+            )}
+          </div>
           <p style={{ fontSize: 13, color: 'rgba(232,240,254,0.82)', lineHeight: 1.55 }}>
             {text}
           </p>
@@ -276,6 +320,9 @@ function MemoraaApp({ getToken }) {
     } catch { return DEFAULT_PROFILE }
   })
   const [history, setHistory] = useState([])
+  const [memorySearch, setMemorySearch] = useState('')
+  const [memorySearchResults, setMemorySearchResults] = useState(null)
+  const [memoryCategory, setMemoryCategory] = useState('all')
   const [prefs, setPrefs] = useState({ nudge_enabled: false, nudge_local_hour: 9, timezone: 'UTC' })
   const [pendingNudge, setPendingNudge] = useState(null)
   const [showInstallBanner, setShowInstallBanner] = useState(false)
@@ -358,6 +405,21 @@ function MemoraaApp({ getToken }) {
     })()
     return () => { cancelled = true }
   }, [authedFetch])
+
+  // Debounced semantic search over memories
+  useEffect(() => {
+    const q = memorySearch.trim()
+    if (!q) { setMemorySearchResults(null); return }
+    const t = setTimeout(async () => {
+      try {
+        const r = await authedFetch(`/api/memories?q=${encodeURIComponent(q)}`)
+        if (!r.ok) return
+        const { memories: rows } = await r.json()
+        setMemorySearchResults(Array.isArray(rows) ? rows : [])
+      } catch {}
+    }, 250)
+    return () => clearTimeout(t)
+  }, [memorySearch, authedFetch])
 
   // Load prefs + pending nudge once signed in
   useEffect(() => {
@@ -453,20 +515,29 @@ function MemoraaApp({ getToken }) {
   // System prompt — memory block is injected server-side in /api/chat
   const buildSystemPrompt = useCallback(() => {
     const lang = LANGUAGES.find(l => l.code === profile.language) || LANGUAGES[0]
+    const today = new Date().toISOString().slice(0, 10)
     const nameLine = profile.name ? `\nThe user's name is ${profile.name}. Address them naturally by name when it feels right.` : ''
     const langLine = `\nPreferred language: ${lang.label} (${lang.native}). Reply in this language by default, but match the user's language if they switch.`
 
     return `You are Memoraa — a warm, perceptive personal AI companion. You speak like a trusted friend who truly listens.${nameLine}${langLine}
+Today's date is ${today} (use this to resolve relative dates like "Thursday", "next week", "tomorrow").
 
 Your rules:
 - Reply naturally, warmly, conversationally. Keep voice replies to 2-4 sentences max.
 - Match the user's language and style exactly (Hindi, English, Hinglish, Spanish, etc.)
-- Extract meaningful personal facts: goals, preferences, life events, feelings, relationships
+- Extract meaningful personal facts: goals, preferences, life events, feelings, relationships.
+- When the user asks what you remember about something or someone ("what did I tell you about…", "do you remember…", "tell me about my…"), answer directly from the memories you have. List 2-4 of the most relevant facts naturally in a sentence or two; if you have nothing, say so honestly.
 - Never be generic. Reference what you know about them when relevant.
-- Never say "I'm an AI" unless directly asked
+- Never say "I'm an AI" unless directly asked.
 
 After your reply, on a NEW LINE, output this whenever the user shares ANY personal detail (name, age, work, location, family, friends, mood, goal, plan, opinion, preference, hobby, frustration, win, fear, hope, routine):
-MEMORY_JSON: {"remember": "concise third-person fact about the user"}
+MEMORY_JSON: {"remember": "concise third-person fact about the user", "category": "one of: person | event | preference | goal | feeling | todo | health | other", "due_at": "ISO date YYYY-MM-DD if the fact references a future time, otherwise omit"}
+
+Examples of when to set due_at:
+- "I have a doctor appointment Thursday" → category: "event", due_at: next Thursday's date
+- "I need to call mom tomorrow" → category: "todo", due_at: tomorrow's date
+- "My birthday is March 12" → category: "event", due_at: next March 12 (this year or next)
+Omit due_at for timeless facts like preferences, ongoing goals, or feelings.
 
 Be generous — small details are valuable. Do not output MEMORY_JSON only if the message is purely a question with no personal content. Never fabricate memories.`
   }, [profile.name, profile.language])
@@ -692,14 +763,16 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
       const memMatch = fullText.match(/MEMORY[_\s]*JSON\s*:?\s*`{0,3}\s*(\{[\s\S]*?"remember"[\s\S]*?\})/i)
       if (memMatch) {
         try {
-          const { remember } = JSON.parse(memMatch[1])
-          const fact = (remember || '').toString().trim()
+          const parsed = JSON.parse(memMatch[1])
+          const fact = (parsed.remember || '').toString().trim()
+          const category = typeof parsed.category === 'string' ? parsed.category.trim().toLowerCase() : null
+          const dueAt = typeof parsed.due_at === 'string' && parsed.due_at.trim() ? parsed.due_at.trim() : null
           if (fact.length > 4) {
             const dup = memories.some(m => m.fact?.toLowerCase() === fact.toLowerCase())
             if (!dup) {
               authedFetch('/api/memories', {
                 method: 'POST',
-                body: JSON.stringify({ fact }),
+                body: JSON.stringify({ fact, category, due_at: dueAt }),
               }).then(async r => {
                 if (!r.ok) return
                 const { memory } = await r.json()
@@ -1275,23 +1348,41 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
                 Speak freely. I listen, remember, and never share.
               </p>
 
-              {pendingNudge && (
+              {pendingNudge && (() => {
+                const isDigest = pendingNudge.kind === 'digest'
+                const isFollowup = pendingNudge.kind === 'followup'
+                const icon = isDigest ? '📝' : isFollowup ? '🔔' : '💭'
+                const tint = isDigest
+                  ? { bg: 'rgba(123,94,167,0.1)', border: 'rgba(123,94,167,0.3)' }
+                  : { bg: 'rgba(0,229,255,0.07)', border: 'rgba(0,229,255,0.22)' }
+                const label = isDigest ? 'Your week' : isFollowup ? 'Following up' : 'Checking in'
+                return (
                 <div style={{
                   marginTop: 14, padding: '12px 14px',
-                  background: 'rgba(0,229,255,0.07)',
-                  border: '1px solid rgba(0,229,255,0.22)',
+                  background: tint.bg,
+                  border: `1px solid ${tint.border}`,
                   borderRadius: 14,
                   display: 'flex', flexDirection: 'column', gap: 10,
                   textAlign: 'left',
                   animation: 'fadeUp 0.35s ease',
                 }}>
                   <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-                    <span style={{ fontSize: 16, lineHeight: 1.4 }}>💭</span>
-                    <p style={{
-                      flex: 1, fontSize: 13, lineHeight: 1.5, color: 'var(--text)',
-                    }}>
-                      {pendingNudge.prompt}
-                    </p>
+                    <span style={{ fontSize: 16, lineHeight: 1.4 }}>{icon}</span>
+                    <div style={{ flex: 1 }}>
+                      <p style={{
+                        fontSize: 9, color: 'var(--muted-light)',
+                        fontFamily: "'Space Mono', monospace",
+                        letterSpacing: '0.08em', textTransform: 'uppercase',
+                        marginBottom: 4,
+                      }}>
+                        {label}
+                      </p>
+                      <p style={{
+                        fontSize: 13, lineHeight: 1.5, color: 'var(--text)',
+                      }}>
+                        {pendingNudge.prompt}
+                      </p>
+                    </div>
                   </div>
                   <div style={{ display: 'flex', gap: 8 }}>
                     <button
@@ -1331,7 +1422,8 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
                     </button>
                   </div>
                 </div>
-              )}
+                )
+              })()}
             </div>
 
             {/* Orb + status */}
@@ -1451,21 +1543,50 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
               )}
             </div>
 
-            {/* Auto Dream banner */}
-            {memories.length > 5 && (
+            {/* Search */}
+            {memories.length > 3 && (
+              <input
+                type="text"
+                value={memorySearch}
+                onChange={(e) => setMemorySearch(e.target.value)}
+                placeholder="Search memories — what do you remember about…"
+                style={{
+                  background: 'rgba(13,21,37,0.6)',
+                  border: '1px solid rgba(0,212,255,0.15)',
+                  borderRadius: 10, padding: '9px 12px',
+                  color: 'var(--text)', fontFamily: "'Sora', sans-serif",
+                  fontSize: 13, outline: 'none', marginBottom: 10,
+                }}
+              />
+            )}
+
+            {/* Category filter pills */}
+            {memories.length > 5 && !memorySearch && (
               <div style={{
-                background: 'linear-gradient(135deg, rgba(123,94,167,0.12), rgba(0,212,255,0.08))',
-                border: '1px solid rgba(123,94,167,0.2)',
-                borderRadius: 12, padding: '10px 14px', marginBottom: 12,
-                display: 'flex', alignItems: 'center', gap: 10,
+                display: 'flex', gap: 6, marginBottom: 10, overflowX: 'auto',
+                paddingBottom: 4,
               }}>
-                <span style={{ fontSize: 18 }}>✨</span>
-                <div>
-                  <p style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>Auto Dream</p>
-                  <p style={{ fontSize: 11, color: 'var(--muted-light)' }}>
-                    Memoraa is consolidating your memories quietly.
-                  </p>
-                </div>
+                {['all', 'person', 'event', 'preference', 'goal', 'feeling', 'todo', 'health'].map(cat => {
+                  const active = memoryCategory === cat
+                  const meta = CATEGORY_META[cat]
+                  return (
+                    <button
+                      key={cat}
+                      onClick={() => setMemoryCategory(cat)}
+                      style={{
+                        background: active ? 'rgba(0,229,255,0.12)' : 'rgba(255,255,255,0.03)',
+                        border: `1px solid ${active ? 'rgba(0,229,255,0.3)' : 'rgba(255,255,255,0.07)'}`,
+                        borderRadius: 999, padding: '4px 10px',
+                        color: active ? '#00e5ff' : 'var(--muted-light)',
+                        fontFamily: "'Space Mono', monospace", fontSize: 10,
+                        textTransform: 'uppercase', letterSpacing: '0.05em',
+                        cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
+                      }}
+                    >
+                      {meta && cat !== 'all' ? `${meta.icon} ${cat}` : cat}
+                    </button>
+                  )
+                })}
               </div>
             )}
 
@@ -1473,19 +1594,45 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
               flex: 1, overflowY: 'auto', display: 'flex',
               flexDirection: 'column', gap: 8,
             }}>
-              {memories.length === 0 ? (
-                <div style={{ textAlign: 'center', paddingTop: 56 }}>
-                  <p style={{ fontSize: 34, marginBottom: 14 }}>🌙</p>
-                  <p style={{ color: 'var(--muted-light)', fontSize: 13, lineHeight: 1.7 }}>
-                    Nothing remembered yet.<br />
-                    Speak to Memoraa — she'll quietly<br />note things that matter.
-                  </p>
-                </div>
-              ) : (
-                memories.map((m, i) => (
-                  <MemoryChip key={m.id} id={m.id} text={m.fact} index={i} onDelete={deleteMemory} />
+              {(() => {
+                const source = memorySearchResults !== null ? memorySearchResults : memories
+                const filtered = (memoryCategory === 'all' || memorySearch)
+                  ? source
+                  : source.filter(m => m.category === memoryCategory)
+
+                if (memories.length === 0) {
+                  return (
+                    <div style={{ textAlign: 'center', paddingTop: 56 }}>
+                      <p style={{ fontSize: 34, marginBottom: 14 }}>🌙</p>
+                      <p style={{ color: 'var(--muted-light)', fontSize: 13, lineHeight: 1.7 }}>
+                        Nothing remembered yet.<br />
+                        Speak to Memoraa — she'll quietly<br />note things that matter.
+                      </p>
+                    </div>
+                  )
+                }
+                if (filtered.length === 0) {
+                  return (
+                    <p style={{
+                      color: 'var(--muted)', fontSize: 12, textAlign: 'center',
+                      paddingTop: 36, fontFamily: "'Space Mono', monospace",
+                    }}>
+                      {memorySearch ? 'No matches.' : 'No memories in this category yet.'}
+                    </p>
+                  )
+                }
+                return filtered.map((m, i) => (
+                  <MemoryChip
+                    key={m.id}
+                    id={m.id}
+                    text={m.fact}
+                    category={m.category}
+                    dueAt={m.due_at}
+                    index={i}
+                    onDelete={deleteMemory}
+                  />
                 ))
-              )}
+              })()}
             </div>
           </div>
         )}

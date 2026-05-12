@@ -13,6 +13,7 @@
     }
   ],
   "crons": [
-    { "path": "/api/cron/nudge", "schedule": "0 14 * * *" }
+    { "path": "/api/cron/nudge", "schedule": "0 14 * * *" },
+    { "path": "/api/cron/digest", "schedule": "0 15 * * 0" }
   ]
 }

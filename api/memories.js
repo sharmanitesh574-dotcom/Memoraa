@@ -26,6 +26,10 @@ async function userIdFromRequest(req) {
   }
 }
 
+const CATEGORIES = new Set([
+  'person', 'event', 'preference', 'goal', 'feeling', 'todo', 'health', 'other',
+])
+
 let schemaReady = false
 async function ensureSchema() {
   if (schemaReady) return
@@ -37,9 +41,25 @@ async function ensureSchema() {
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`
   await sql`ALTER TABLE memories ADD COLUMN IF NOT EXISTS embedding vector(1536)`
+  await sql`ALTER TABLE memories ADD COLUMN IF NOT EXISTS category TEXT`
+  await sql`ALTER TABLE memories ADD COLUMN IF NOT EXISTS due_at TIMESTAMPTZ`
   await sql`CREATE INDEX IF NOT EXISTS memories_user_id_idx ON memories(user_id)`
+  await sql`CREATE INDEX IF NOT EXISTS memories_due_at_idx ON memories(user_id, due_at) WHERE due_at IS NOT NULL`
   await sql`CREATE INDEX IF NOT EXISTS memories_embedding_idx ON memories USING hnsw (embedding vector_cosine_ops)`
   schemaReady = true
+}
+
+function normCategory(c) {
+  if (typeof c !== 'string') return null
+  const lower = c.trim().toLowerCase()
+  return CATEGORIES.has(lower) ? lower : null
+}
+
+function normDueAt(d) {
+  if (typeof d !== 'string' || !d.trim()) return null
+  const ms = Date.parse(d)
+  if (!Number.isFinite(ms)) return null
+  return new Date(ms).toISOString()
 }
 
 async function backfillBatch(userId, limit = 5) {
@@ -71,9 +91,25 @@ export default async function handler(req, res) {
 
   try {
     if (req.method === 'GET') {
+      const q = (req.query?.q || '').toString().trim()
+      if (q) {
+        const embeds = await embedTexts([q])
+        if (embeds) {
+          const rows = await sql`
+            SELECT id, fact, category, due_at, created_at,
+                   1 - (embedding <=> ${vecLiteral(embeds[0])}::vector) AS similarity
+            FROM memories
+            WHERE user_id = ${userId} AND embedding IS NOT NULL
+            ORDER BY embedding <=> ${vecLiteral(embeds[0])}::vector
+            LIMIT 30
+          `
+          return res.status(200).json({ memories: rows })
+        }
+        // fall through to recent if embedding fails
+      }
       await backfillBatch(userId)
       const rows = await sql`
-        SELECT id, fact, created_at
+        SELECT id, fact, category, due_at, created_at
         FROM memories
         WHERE user_id = ${userId}
         ORDER BY created_at DESC
@@ -100,7 +136,7 @@ export default async function handler(req, res) {
           }
         }
         const rows = await sql`
-          SELECT id, fact, created_at FROM memories
+          SELECT id, fact, category, due_at, created_at FROM memories
           WHERE user_id = ${userId}
           ORDER BY created_at DESC LIMIT 200
         `
@@ -109,19 +145,22 @@ export default async function handler(req, res) {
 
       const fact = (body.fact || '').toString().trim()
       if (fact.length < 5) return res.status(400).json({ error: 'fact too short' })
+      const category = normCategory(body.category)
+      const dueAt = normDueAt(body.due_at)
       const embeds = await embedTexts([fact])
       const emb = embeds ? embeds[0] : null
-      const [row] = emb
-        ? await sql`
-            INSERT INTO memories (user_id, fact, embedding)
-            VALUES (${userId}, ${fact}, ${vecLiteral(emb)}::vector)
-            RETURNING id, fact, created_at
-          `
-        : await sql`
-            INSERT INTO memories (user_id, fact)
-            VALUES (${userId}, ${fact})
-            RETURNING id, fact, created_at
-          `
+
+      const [row] = await sql`
+        INSERT INTO memories (user_id, fact, embedding, category, due_at)
+        VALUES (
+          ${userId},
+          ${fact},
+          ${emb ? vecLiteral(emb) : null}::vector,
+          ${category},
+          ${dueAt}
+        )
+        RETURNING id, fact, category, due_at, created_at
+      `
       return res.status(200).json({ memory: row })
     }
 
