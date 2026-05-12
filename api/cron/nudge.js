@@ -92,7 +92,6 @@ export default async function handler(req, res) {
       SELECT p.user_id
       FROM user_prefs p
       WHERE p.nudge_enabled = TRUE
-        AND EXTRACT(HOUR FROM NOW() AT TIME ZONE p.timezone)::int = p.nudge_local_hour
         AND NOT EXISTS (
           SELECT 1 FROM nudges n
           WHERE n.user_id = p.user_id
