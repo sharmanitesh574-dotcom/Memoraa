@@ -276,6 +276,8 @@ function MemoraaApp({ getToken }) {
     } catch { return DEFAULT_PROFILE }
   })
   const [history, setHistory] = useState([])
+  const [prefs, setPrefs] = useState({ nudge_enabled: false, nudge_local_hour: 9, timezone: 'UTC' })
+  const [pendingNudge, setPendingNudge] = useState(null)
   const [showInstallBanner, setShowInstallBanner] = useState(false)
   const [deferredPrompt, setDeferredPrompt] = useState(null)
   const [error, setError] = useState('')
@@ -357,10 +359,51 @@ function MemoraaApp({ getToken }) {
     return () => { cancelled = true }
   }, [authedFetch])
 
+  // Load prefs + pending nudge once signed in
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const [pr, nr] = await Promise.all([
+          authedFetch('/api/prefs').then(r => r.ok ? r.json() : null).catch(() => null),
+          authedFetch('/api/nudges').then(r => r.ok ? r.json() : null).catch(() => null),
+        ])
+        if (cancelled) return
+        if (pr?.prefs) setPrefs(pr.prefs)
+        if (nr?.nudge) setPendingNudge(nr.nudge)
+      } catch {}
+    })()
+    return () => { cancelled = true }
+  }, [authedFetch])
+
   // Persist profile
   useEffect(() => {
     localStorage.setItem('memoraa_profile_v1', JSON.stringify(profile))
   }, [profile])
+
+  // Save a pref patch — auto-fills timezone from the browser
+  const savePrefs = useCallback(async (patch) => {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+    const next = { ...prefs, timezone: tz, ...patch }
+    setPrefs(next)
+    try {
+      await authedFetch('/api/prefs', {
+        method: 'POST',
+        body: JSON.stringify(next),
+      })
+    } catch {}
+  }, [authedFetch, prefs])
+
+  const dismissNudge = useCallback(async (nudge) => {
+    if (!nudge) return
+    setPendingNudge(null)
+    try {
+      await authedFetch('/api/nudges', {
+        method: 'POST',
+        body: JSON.stringify({ id: nudge.id, action: 'dismissed' }),
+      })
+    } catch {}
+  }, [authedFetch])
 
   // Detect SpeechRecognition support once
   useEffect(() => {
@@ -1214,7 +1257,7 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
             padding: '4px 24px 36px', overflow: 'hidden',
           }}>
             {/* Title */}
-            <div style={{ textAlign: 'center', paddingTop: 4 }}>
+            <div style={{ textAlign: 'center', paddingTop: 4, width: '100%' }}>
               <h1 style={{
                 fontSize: 30, fontWeight: 300, letterSpacing: '-0.8px',
                 background: 'linear-gradient(135deg, #00e5ff 0%, #7b5ea7 50%, #e8f0fe 100%)',
@@ -1231,6 +1274,64 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
               }}>
                 Speak freely. I listen, remember, and never share.
               </p>
+
+              {pendingNudge && (
+                <div style={{
+                  marginTop: 14, padding: '12px 14px',
+                  background: 'rgba(0,229,255,0.07)',
+                  border: '1px solid rgba(0,229,255,0.22)',
+                  borderRadius: 14,
+                  display: 'flex', flexDirection: 'column', gap: 10,
+                  textAlign: 'left',
+                  animation: 'fadeUp 0.35s ease',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                    <span style={{ fontSize: 16, lineHeight: 1.4 }}>💭</span>
+                    <p style={{
+                      flex: 1, fontSize: 13, lineHeight: 1.5, color: 'var(--text)',
+                    }}>
+                      {pendingNudge.prompt}
+                    </p>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button
+                      onClick={async () => {
+                        const n = pendingNudge
+                        setHistory(h => [...h, { role: 'assistant', content: n.prompt }])
+                        setReply(n.prompt)
+                        setPendingNudge(null)
+                        authedFetch('/api/nudges', {
+                          method: 'POST',
+                          body: JSON.stringify({ id: n.id, action: 'delivered' }),
+                        }).catch(() => {})
+                        await speak(n.prompt)
+                      }}
+                      style={{
+                        flex: 1,
+                        background: 'var(--cyan)', color: '#000', border: 'none',
+                        borderRadius: 10, padding: '8px 12px',
+                        fontFamily: "'Sora', sans-serif", fontSize: 12, fontWeight: 600,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Hear it
+                    </button>
+                    <button
+                      onClick={() => dismissNudge(pendingNudge)}
+                      style={{
+                        background: 'rgba(255,255,255,0.04)',
+                        color: 'var(--muted-light)',
+                        border: '1px solid rgba(255,255,255,0.1)',
+                        borderRadius: 10, padding: '8px 14px',
+                        fontFamily: "'Space Mono', monospace", fontSize: 11,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Orb + status */}
@@ -1504,6 +1605,66 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
                     </button>
                   )
                 })}
+              </div>
+            </div>
+
+            {/* Daily check-in */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <span style={{
+                fontSize: 11, color: 'var(--muted-light)',
+                fontFamily: "'Space Mono', monospace",
+                letterSpacing: '0.08em', textTransform: 'uppercase',
+              }}>
+                Daily check-in
+              </span>
+              <div style={{
+                background: 'rgba(13,21,37,0.6)',
+                border: '1px solid rgba(0,212,255,0.15)',
+                borderRadius: 12, padding: '12px 14px',
+                display: 'flex', flexDirection: 'column', gap: 10,
+              }}>
+                <label style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  gap: 8, cursor: 'pointer',
+                }}>
+                  <span style={{ fontSize: 13 }}>Send me a check-in</span>
+                  <input
+                    type="checkbox"
+                    checked={prefs.nudge_enabled}
+                    onChange={(e) => savePrefs({ nudge_enabled: e.target.checked })}
+                    style={{ width: 18, height: 18, accentColor: '#00e5ff', cursor: 'pointer' }}
+                  />
+                </label>
+                {prefs.nudge_enabled && (
+                  <label style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+                  }}>
+                    <span style={{ fontSize: 13 }}>At</span>
+                    <select
+                      value={prefs.nudge_local_hour}
+                      onChange={(e) => savePrefs({ nudge_local_hour: parseInt(e.target.value, 10) })}
+                      style={{
+                        background: 'rgba(13,21,37,0.9)',
+                        border: '1px solid rgba(0,212,255,0.2)',
+                        borderRadius: 8, padding: '6px 10px',
+                        color: 'var(--text)', fontFamily: "'Space Mono', monospace", fontSize: 12,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {Array.from({ length: 24 }, (_, h) => (
+                        <option key={h} value={h}>
+                          {String(h).padStart(2, '0')}:00
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                <p style={{
+                  fontSize: 10, color: 'var(--muted)',
+                  fontFamily: "'Space Mono', monospace",
+                }}>
+                  {prefs.timezone}
+                </p>
               </div>
             </div>
 
