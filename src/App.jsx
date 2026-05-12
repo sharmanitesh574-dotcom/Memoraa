@@ -23,6 +23,28 @@ const LANGUAGES = [
 
 const DEFAULT_PROFILE = { name: '', language: 'en-US' }
 
+// ── TTS voice per language (OpenAI tts-1 voices are multilingual but timbre differs) ──
+const VOICE_BY_LANG = {
+  'en-US': 'nova',
+  'en-GB': 'fable',
+  'en-IN': 'nova',
+  'hi-IN': 'shimmer',
+  'es-ES': 'nova',
+  'fr-FR': 'shimmer',
+  'de-DE': 'alloy',
+  'it-IT': 'shimmer',
+  'pt-BR': 'nova',
+  'ja-JP': 'shimmer',
+  'ko-KR': 'shimmer',
+  'zh-CN': 'alloy',
+  'ar-SA': 'onyx',
+  'ru-RU': 'onyx',
+}
+const DEFAULT_VOICE = 'nova'
+
+// Keep conversation context bounded — long-term info lives in `memories`
+const MAX_HISTORY_MESSAGES = 16
+
 // ── Grain overlay ──────────────────────────────────────────────
 function GrainOverlay() {
   return (
@@ -274,11 +296,17 @@ function MemoraaApp({ getToken }) {
   const mediaStreamRef = useRef(null)
   const audioPlayerRef = useRef(null)
 
-  // Streaming-TTS audio queue
-  const audioQueueRef = useRef([]) // [{ url, text }]
+  // Streaming-TTS sequenced queue (preserves sentence order even if fetches race)
+  const ttsSeqRef = useRef(0)          // next sequence to assign
+  const ttsNextPlayRef = useRef(0)     // next sequence to play
+  const ttsSlotsRef = useRef(new Map()) // seq -> null (pending) | { url } | { skip: true }
+  const ttsAbortsRef = useRef(new Set()) // in-flight AbortControllers (for interrupts)
   const audioPlayingRef = useRef(false)
   const streamDoneRef = useRef(false)
   const streamAbortRef = useRef(null)
+
+  // Voice-activity detection (auto-stop listening on silence)
+  const vadCleanupRef = useRef(null)
 
   // Auth-aware fetch helper
   const authedFetch = useCallback(async (input, init = {}) => {
@@ -354,6 +382,7 @@ function MemoraaApp({ getToken }) {
   useEffect(() => () => {
     try { recognitionRef.current?.abort?.() } catch {}
     try { recorderRef.current?.stop?.() } catch {}
+    try { vadCleanupRef.current?.() } catch {}
     try { mediaStreamRef.current?.getTracks?.().forEach(t => t.stop()) } catch {}
     try { audioPlayerRef.current?.pause?.() } catch {}
     try { synthRef.current?.cancel?.() } catch {}
@@ -403,75 +432,112 @@ MEMORY_JSON: {"remember": "concise third-person fact about the user"}
 Be generous — small details are valuable. Do not output MEMORY_JSON only if the message is purely a question with no personal content. Never fabricate memories.`
   }, [memories, profile.name, profile.language])
 
-  // ── Audio queue (sentence-by-sentence TTS) ────────────────────
+  // ── Audio queue (sentence-by-sentence TTS, order-preserving) ──
   const resetAudioQueue = useCallback(() => {
     streamDoneRef.current = false
     if (streamAbortRef.current) {
       try { streamAbortRef.current.abort() } catch {}
       streamAbortRef.current = null
     }
+    for (const ac of ttsAbortsRef.current) {
+      try { ac.abort() } catch {}
+    }
+    ttsAbortsRef.current.clear()
     if (audioPlayerRef.current) {
       try { audioPlayerRef.current.pause(); audioPlayerRef.current.src = '' } catch {}
       audioPlayerRef.current = null
     }
-    for (const item of audioQueueRef.current) {
-      try { URL.revokeObjectURL(item.url) } catch {}
+    for (const slot of ttsSlotsRef.current.values()) {
+      if (slot && slot.url) { try { URL.revokeObjectURL(slot.url) } catch {} }
     }
-    audioQueueRef.current = []
+    ttsSlotsRef.current.clear()
+    ttsSeqRef.current = 0
+    ttsNextPlayRef.current = 0
     audioPlayingRef.current = false
   }, [])
 
-  const playNextIfIdle = useCallback(() => {
+  // Drain slots strictly in sequence: only play `next` once its blob is ready.
+  // Pending fetches (slot === null) block the queue; skipped (failed) slots
+  // are stepped over without playing.
+  const drainQueue = useCallback(() => {
     if (audioPlayingRef.current) return
-    const item = audioQueueRef.current.shift()
-    if (!item) {
-      // Queue drained — if the SSE stream is finished we can go idle
-      if (streamDoneRef.current) {
-        setOrbState('idle')
-        setStatusText('Tap the orb to speak')
+    while (true) {
+      const next = ttsNextPlayRef.current
+      if (!ttsSlotsRef.current.has(next)) {
+        // No slot enqueued for this seq yet. If stream finished and nothing
+        // pending, we're done.
+        if (streamDoneRef.current && ttsSlotsRef.current.size === 0) {
+          setOrbState('idle')
+          setStatusText('Tap the orb to speak')
+        }
+        return
       }
+      const slot = ttsSlotsRef.current.get(next)
+      if (slot === null) return // still fetching — wait
+      ttsSlotsRef.current.delete(next)
+      ttsNextPlayRef.current = next + 1
+      if (slot.skip) continue
+      audioPlayingRef.current = true
+      setOrbState('speaking')
+      setStatusText('Speaking…')
+      const url = slot.url
+      const audio = new Audio(url)
+      audioPlayerRef.current = audio
+      const cleanup = () => {
+        try { URL.revokeObjectURL(url) } catch {}
+        audioPlayingRef.current = false
+        if (audioPlayerRef.current === audio) audioPlayerRef.current = null
+        drainQueue()
+      }
+      audio.onended = cleanup
+      audio.onerror = cleanup
+      audio.play().catch(cleanup)
       return
     }
-    audioPlayingRef.current = true
-    setOrbState('speaking')
-    setStatusText('Speaking…')
-    const audio = new Audio(item.url)
-    audioPlayerRef.current = audio
-    const cleanup = () => {
-      try { URL.revokeObjectURL(item.url) } catch {}
-      audioPlayingRef.current = false
-      if (audioPlayerRef.current === audio) audioPlayerRef.current = null
-      playNextIfIdle()
-    }
-    audio.onended = cleanup
-    audio.onerror = cleanup
-    audio.play().catch(cleanup)
   }, [])
 
   const enqueueTTS = useCallback(async (text) => {
     const t = (text || '').trim()
     if (!t) return
+    const seq = ttsSeqRef.current++
+    ttsSlotsRef.current.set(seq, null) // reserve slot now to preserve order
+    const ac = new AbortController()
+    ttsAbortsRef.current.add(ac)
     try {
       const token = await getToken()
+      const voice = VOICE_BY_LANG[langRef.current] || DEFAULT_VOICE
       const res = await fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ text: t, voice: 'nova' }),
+        body: JSON.stringify({ text: t, voice, model: 'tts-1' }),
+        signal: ac.signal,
       })
+      ttsAbortsRef.current.delete(ac)
+      // Slot may have been cleared by resetAudioQueue mid-flight
+      if (!ttsSlotsRef.current.has(seq)) return
       if (!res.ok) {
         // eslint-disable-next-line no-console
         console.warn('[memoraa] /api/tts chunk failed', res.status)
+        ttsSlotsRef.current.set(seq, { skip: true })
+        drainQueue()
         return
       }
       const blob = await res.blob()
+      if (!ttsSlotsRef.current.has(seq)) return
       const url = URL.createObjectURL(blob)
-      audioQueueRef.current.push({ url, text: t })
-      playNextIfIdle()
+      ttsSlotsRef.current.set(seq, { url, text: t })
+      drainQueue()
     } catch (err) {
+      ttsAbortsRef.current.delete(ac)
+      if (err?.name === 'AbortError') return
       // eslint-disable-next-line no-console
       console.warn('[memoraa] tts chunk error:', err)
+      if (ttsSlotsRef.current.has(seq)) {
+        ttsSlotsRef.current.set(seq, { skip: true })
+        drainQueue()
+      }
     }
-  }, [getToken, playNextIfIdle])
+  }, [getToken, drainQueue])
 
   // Find the index just past the LAST sentence terminator in `text`.
   // Returns -1 if no full sentence is available yet.
@@ -493,6 +559,8 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
     resetAudioQueue()
 
     const newHistory = [...history, { role: 'user', content: userText }]
+    // Keep prompt bounded — long-term info lives in `memories` (loaded via system prompt)
+    const sentHistory = newHistory.slice(-MAX_HISTORY_MESSAGES)
     const abort = new AbortController()
     streamAbortRef.current = abort
 
@@ -503,7 +571,7 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
           model: 'claude-haiku-4-5-20251001',
           max_tokens: 400,
           system: buildSystemPrompt(),
-          messages: newHistory,
+          messages: sentHistory,
           stream: true,
         }),
         signal: abort.signal,
@@ -576,9 +644,9 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
         if (tail) enqueueTTS(tail)
       }
 
-      // Persist the clean reply to history + UI
+      // Persist the clean reply to history + UI (capped to recent window)
       const cleanReply = fullText.replace(/```[\s\S]*?```|MEMORY[_\s]*JSON[\s\S]*$/gi, '').trim()
-      setHistory([...newHistory, { role: 'assistant', content: cleanReply }])
+      setHistory([...newHistory, { role: 'assistant', content: cleanReply }].slice(-MAX_HISTORY_MESSAGES))
       setReply(cleanReply)
 
       // Memory extraction
@@ -604,8 +672,8 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
       }
 
       streamDoneRef.current = true
-      // If audio queue already drained, go idle now; otherwise playNext handles it
-      if (!audioPlayingRef.current && audioQueueRef.current.length === 0) {
+      // If audio queue already drained, go idle now; otherwise drainQueue handles it
+      if (!audioPlayingRef.current && ttsSlotsRef.current.size === 0) {
         setOrbState('idle')
         setStatusText('Tap the orb to speak')
       }
@@ -845,6 +913,7 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
 
     recorder.onstop = async () => {
       isListeningRef.current = false
+      try { vadCleanupRef.current?.() } catch {}
       if (recorderRef.current === recorder) recorderRef.current = null
       try { stream.getTracks().forEach(t => t.stop()) } catch {}
       mediaStreamRef.current = null
@@ -897,6 +966,7 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
 
     recorder.onerror = () => {
       isListeningRef.current = false
+      try { vadCleanupRef.current?.() } catch {}
       try { stream.getTracks().forEach(t => t.stop()) } catch {}
       setError('Recording error. Try again.')
       setOrbState('idle')
@@ -907,12 +977,78 @@ Be generous — small details are valuable. Do not output MEMORY_JSON only if th
       recorder.start()
       isListeningRef.current = true
       setOrbState('listening')
-      setStatusText('Listening… tap to stop')
+      setStatusText('Listening…')
       setReply(''); setTranscript(''); setError('')
     } catch (err) {
       try { stream.getTracks().forEach(t => t.stop()) } catch {}
       setError('Could not start recording.')
       setOrbState('idle')
+      return
+    }
+
+    // Voice-activity auto-stop: watches mic RMS and stops recording after a
+    // short silence following actual speech. Falls back to a hard cap so a
+    // forgotten-open mic doesn't run forever.
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext
+      if (!AudioCtx) return // VAD optional — tap-to-stop still works
+      const audioCtx = new AudioCtx()
+      const source = audioCtx.createMediaStreamSource(stream)
+      const analyser = audioCtx.createAnalyser()
+      analyser.fftSize = 1024
+      source.connect(analyser)
+      const buf = new Uint8Array(analyser.fftSize)
+
+      const SILENCE_RMS = 0.012   // ~ambient room floor
+      const SILENCE_MS = 1400     // pause length that ends a turn
+      const MIN_SPEECH_MS = 600   // require some real speech first
+      const MAX_RECORDING_MS = 30000
+
+      const startedAt = performance.now()
+      let speechStartedAt = 0
+      let silenceStartedAt = 0
+      let raf = 0
+      let stopped = false
+
+      const stopOnce = () => {
+        if (stopped) return
+        stopped = true
+        try { recorder.stop() } catch {}
+      }
+
+      const tick = () => {
+        if (!isListeningRef.current || stopped) return
+        analyser.getByteTimeDomainData(buf)
+        let s = 0
+        for (let i = 0; i < buf.length; i++) {
+          const v = (buf[i] - 128) / 128
+          s += v * v
+        }
+        const rms = Math.sqrt(s / buf.length)
+        const now = performance.now()
+
+        if (now - startedAt > MAX_RECORDING_MS) { stopOnce(); return }
+
+        if (rms > SILENCE_RMS) {
+          if (!speechStartedAt) speechStartedAt = now
+          silenceStartedAt = 0
+        } else if (speechStartedAt && now - speechStartedAt > MIN_SPEECH_MS) {
+          if (!silenceStartedAt) silenceStartedAt = now
+          else if (now - silenceStartedAt > SILENCE_MS) { stopOnce(); return }
+        }
+        raf = requestAnimationFrame(tick)
+      }
+      raf = requestAnimationFrame(tick)
+
+      vadCleanupRef.current = () => {
+        stopped = true
+        cancelAnimationFrame(raf)
+        try { source.disconnect() } catch {}
+        try { audioCtx.close() } catch {}
+        vadCleanupRef.current = null
+      }
+    } catch {
+      // VAD setup failed — non-fatal, user can still tap to stop
     }
   }, [callClaude, getToken])
 
