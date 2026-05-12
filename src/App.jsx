@@ -407,12 +407,8 @@ function MemoraaApp({ getToken }) {
     setDeferredPrompt(null)
   }
 
-  // System prompt
+  // System prompt — memory block is injected server-side in /api/chat
   const buildSystemPrompt = useCallback(() => {
-    const memBlock = memories.length > 0
-      ? `\n\nWhat you remember about this person:\n${memories.slice(0, 40).map((m, i) => `${i + 1}. ${m.fact}`).join('\n')}`
-      : ''
-
     const lang = LANGUAGES.find(l => l.code === profile.language) || LANGUAGES[0]
     const nameLine = profile.name ? `\nThe user's name is ${profile.name}. Address them naturally by name when it feels right.` : ''
     const langLine = `\nPreferred language: ${lang.label} (${lang.native}). Reply in this language by default, but match the user's language if they switch.`
@@ -424,13 +420,13 @@ Your rules:
 - Match the user's language and style exactly (Hindi, English, Hinglish, Spanish, etc.)
 - Extract meaningful personal facts: goals, preferences, life events, feelings, relationships
 - Never be generic. Reference what you know about them when relevant.
-- Never say "I'm an AI" unless directly asked${memBlock}
+- Never say "I'm an AI" unless directly asked
 
 After your reply, on a NEW LINE, output this whenever the user shares ANY personal detail (name, age, work, location, family, friends, mood, goal, plan, opinion, preference, hobby, frustration, win, fear, hope, routine):
 MEMORY_JSON: {"remember": "concise third-person fact about the user"}
 
 Be generous — small details are valuable. Do not output MEMORY_JSON only if the message is purely a question with no personal content. Never fabricate memories.`
-  }, [memories, profile.name, profile.language])
+  }, [profile.name, profile.language])
 
   // ── Audio queue (sentence-by-sentence TTS, order-preserving) ──
   const resetAudioQueue = useCallback(() => {

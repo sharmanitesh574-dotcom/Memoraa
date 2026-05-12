@@ -1,5 +1,9 @@
 import { verifyToken } from '@clerk/backend'
 import { Readable } from 'node:stream'
+import { neon } from '@neondatabase/serverless'
+import { embedTexts, vecLiteral } from './_embed.js'
+
+const sql = neon(process.env.DATABASE_URL)
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -23,6 +27,52 @@ async function userIdFromRequest(req) {
   }
 }
 
+function lastUserText(messages) {
+  if (!Array.isArray(messages)) return null
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m?.role !== 'user') continue
+    if (typeof m.content === 'string') return m.content
+    if (Array.isArray(m.content)) {
+      const text = m.content.find(c => c?.type === 'text')?.text
+      if (text) return text
+    }
+  }
+  return null
+}
+
+async function retrieveMemories(userId, queryText) {
+  const recentP = sql`
+    SELECT id, fact FROM memories
+    WHERE user_id = ${userId}
+    ORDER BY created_at DESC
+    LIMIT 4
+  `
+
+  let semanticP = Promise.resolve([])
+  if (queryText) {
+    const embeds = await embedTexts([queryText])
+    if (embeds) {
+      semanticP = sql`
+        SELECT id, fact FROM memories
+        WHERE user_id = ${userId} AND embedding IS NOT NULL
+        ORDER BY embedding <=> ${vecLiteral(embeds[0])}::vector
+        LIMIT 8
+      `
+    }
+  }
+
+  const [semantic, recent] = await Promise.all([semanticP, recentP])
+  const seen = new Set()
+  const merged = []
+  for (const r of [...semantic, ...recent]) {
+    if (seen.has(r.id)) continue
+    seen.add(r.id)
+    merged.push(r.fact)
+  }
+  return merged
+}
+
 export default async function handler(req, res) {
   setCors(res)
   if (req.method === 'OPTIONS') return res.status(200).end()
@@ -34,7 +84,21 @@ export default async function handler(req, res) {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) return res.status(500).json({ error: { message: 'API key not configured' } })
 
-  const isStream = req.body?.stream === true
+  const body = { ...req.body }
+  const isStream = body?.stream === true
+
+  try {
+    const queryText = lastUserText(body.messages)
+    const facts = await retrieveMemories(userId, queryText)
+    if (facts.length > 0) {
+      const block = '\n\nWhat you remember about this person:\n' +
+        facts.map((f, i) => `${i + 1}. ${f}`).join('\n')
+      const baseSys = typeof body.system === 'string' ? body.system : ''
+      body.system = baseSys + block
+    }
+  } catch (err) {
+    console.warn('memory injection failed', err.message)
+  }
 
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -44,7 +108,7 @@ export default async function handler(req, res) {
         'x-api-key': apiKey,
         'anthropic-version': '2023-06-01',
       },
-      body: JSON.stringify(req.body),
+      body: JSON.stringify(body),
     })
 
     if (!isStream) {
