@@ -65,7 +65,7 @@ export default async function handler(req, res) {
 
   const form = new FormData()
   form.append('file', new Blob([audio], { type: audioMime }), `audio.${ext}`)
-  form.append('model', 'whisper-1')
+  form.append('model', 'gpt-4o-mini-transcribe')
   if (language) form.append('language', language)
   form.append('prompt', 'Casual conversation. May include English, Hindi, Hinglish, or other languages.')
 

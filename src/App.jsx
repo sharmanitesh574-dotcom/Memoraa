@@ -1144,8 +1144,8 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
       const buf = new Uint8Array(analyser.fftSize)
 
       const SILENCE_RMS = 0.012   // ~ambient room floor
-      const SILENCE_MS = 1400     // pause length that ends a turn
-      const MIN_SPEECH_MS = 600   // require some real speech first
+      const SILENCE_MS = 800      // pause length that ends a turn
+      const MIN_SPEECH_MS = 400   // require some real speech first
       const MAX_RECORDING_MS = 30000
 
       const startedAt = performance.now()
