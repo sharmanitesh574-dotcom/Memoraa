@@ -312,8 +312,8 @@ function TabIcon({ name, active }) {
 
 function BottomNav({ view, setView, memoriesCount, profileInitial }) {
   const tabs = [
-    { id: 'home', icon: 'home', label: 'Talk' },
-    { id: 'memories', icon: 'memories', label: 'Memory', badge: memoriesCount },
+    { id: 'home', icon: 'home', label: 'Today' },
+    { id: 'memories', icon: 'memories', label: 'Timeline', badge: memoriesCount },
     { id: 'profile', icon: 'profile', label: profileInitial ? profileInitial : 'You' },
   ]
   return (
@@ -680,7 +680,7 @@ function MemoraaApp({ getToken }) {
   const [transcript, setTranscript] = useState('')
   const [reply, setReply] = useState('')
   const [view, setView] = useState('home')
-  const [statusText, setStatusText] = useState('Tap the orb to speak')
+  const [statusText, setStatusText] = useState('Tap to talk · or type')
   const [memories, setMemories] = useState([]) // [{ id, fact, created_at }]
   const [memoriesLoaded, setMemoriesLoaded] = useState(false)
   const [profile, setProfile] = useState(() => {
@@ -1039,7 +1039,7 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
         // pending, we're done.
         if (streamDoneRef.current && ttsSlotsRef.current.size === 0) {
           setOrbState('idle')
-          setStatusText('Tap the orb to speak')
+          setStatusText('Tap to talk · or type')
         }
         return
       }
@@ -1250,7 +1250,7 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
       // If audio queue already drained, go idle now; otherwise drainQueue handles it
       if (!audioPlayingRef.current && ttsSlotsRef.current.size === 0) {
         setOrbState('idle')
-        setStatusText('Tap the orb to speak')
+        setStatusText('Tap to talk · or type')
       }
     } catch (err) {
       // eslint-disable-next-line no-console
@@ -1259,7 +1259,7 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
         setError('Could not reach Memoraa. Check your connection.')
       }
       setOrbState('idle')
-      setStatusText('Tap the orb to speak')
+      setStatusText('Tap to talk · or type')
     } finally {
       streamAbortRef.current = null
     }
@@ -1304,11 +1304,11 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
     u.pitch = 1.05
     u.onend = () => {
       setOrbState('idle')
-      setStatusText('Tap the orb to speak')
+      setStatusText('Tap to talk · or type')
     }
     u.onerror = () => {
       setOrbState('idle')
-      setStatusText('Tap the orb to speak')
+      setStatusText('Tap to talk · or type')
     }
     synth.speak(u)
     setTimeout(() => { try { synth.resume?.() } catch {} }, 50)
@@ -1358,7 +1358,7 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
         URL.revokeObjectURL(url)
         if (audioPlayerRef.current === audio) audioPlayerRef.current = null
         setOrbState('idle')
-        setStatusText('Tap the orb to speak')
+        setStatusText('Tap to talk · or type')
       }
       audio.onended = cleanup
       audio.onerror = () => {
@@ -1435,14 +1435,14 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
         if (recognitionRef.current === rec) recognitionRef.current = null
         const said = finalTranscriptRef.current.trim()
         if (said) callClaude(said)
-        else { setOrbState('idle'); setStatusText('Tap the orb to speak') }
+        else { setOrbState('idle'); setStatusText('Tap to talk · or type') }
       }
       rec.onerror = (e) => {
         isListeningRef.current = false
         if (recognitionRef.current === rec) recognitionRef.current = null
         if (e.error === 'not-allowed') setError('Microphone blocked.')
         else if (e.error !== 'no-speech' && e.error !== 'aborted') setError("Couldn't hear you. Try again.")
-        setOrbState('idle'); setStatusText('Tap the orb to speak')
+        setOrbState('idle'); setStatusText('Tap to talk · or type')
       }
       try { rec.start() } catch { setError('Voice is busy. Tap again.'); setOrbState('idle') }
       return
@@ -1498,7 +1498,7 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
       if (totalBytes < 1500) {
         // Probably a tap-cancel or no speech captured
         setOrbState('idle')
-        setStatusText('Tap the orb to speak')
+        setStatusText('Tap to talk · or type')
         return
       }
 
@@ -1528,14 +1528,14 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
           callClaude(said)
         } else {
           setOrbState('idle')
-          setStatusText('Tap the orb to speak')
+          setStatusText('Tap to talk · or type')
         }
       } catch (err) {
         // eslint-disable-next-line no-console
         console.warn('[memoraa] transcribe failed:', err)
         setError("Couldn't transcribe that. Try again.")
         setOrbState('idle')
-        setStatusText('Tap the orb to speak')
+        setStatusText('Tap to talk · or type')
       }
     }
 
@@ -1545,7 +1545,7 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
       try { stream.getTracks().forEach(t => t.stop()) } catch {}
       setError('Recording error. Try again.')
       setOrbState('idle')
-      setStatusText('Tap the orb to speak')
+      setStatusText('Tap to talk · or type')
     }
 
     try {
@@ -1653,7 +1653,7 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
       resetAudioQueue()
       synthRef.current.cancel()
       setOrbState('idle')
-      setStatusText('Tap the orb to speak')
+      setStatusText('Tap to talk · or type')
     } else if (orbState === 'idle') {
       resetAudioQueue()
       startListening()
@@ -1778,14 +1778,85 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
                 animation: 'shimmer 7s linear infinite',
                 marginBottom: 8, lineHeight: 1.15,
               }}>
-                {profile.name ? `Hey ${profile.name}.` : 'Hey there.'}
+                {(() => {
+                  const h = new Date().getHours()
+                  const who = profile.name ? `, ${profile.name}` : ''
+                  if (h < 5)  return `Late night${who}.`
+                  if (h < 12) return `Morning${who}.`
+                  if (h < 17) return `Hey${who || ' there'}.`
+                  if (h < 22) return `Evening${who}.`
+                  return `Late night${who}.`
+                })()}
               </h1>
               <p style={{
-                color: 'var(--text-3)', fontSize: 13, fontWeight: 400, letterSpacing: '0.01em',
-                lineHeight: 1.45,
+                color: 'var(--text-3)', fontSize: 13.5, fontWeight: 400, letterSpacing: '0.01em',
+                lineHeight: 1.5,
               }}>
-                Speak freely. I listen, remember, and never share.
+                {(() => {
+                  const h = new Date().getHours()
+                  if (h < 5)  return "Anything weighing on you tonight?"
+                  if (h < 12) return "What's coming up today?"
+                  if (h < 17) return "What's on your mind?"
+                  if (h < 22) return "How was your day?"
+                  return "Anything weighing on you tonight?"
+                })()}
               </p>
+
+              {/* First-run explainer (only when there's no history at all) */}
+              {memoriesLoaded && memories.length === 0 && history.length === 0 && (
+                <div style={{
+                  marginTop: 16, padding: '14px 16px',
+                  background: 'var(--surface-1)',
+                  border: '1px solid var(--border-1)',
+                  borderRadius: 'var(--r-md)',
+                  textAlign: 'left',
+                  animation: 'fadeUp 0.4s var(--ease-spring)',
+                }}>
+                  <p style={{
+                    fontSize: 12, color: 'var(--text-3)', lineHeight: 1.6,
+                    fontWeight: 400,
+                  }}>
+                    Memoraa is a private voice journal. Speak or type, two minutes a day. I'll quietly remember the names, plans, and moments worth keeping — and show you the timeline.
+                  </p>
+                </div>
+              )}
+
+              {/* Today's entries peek (after first session) */}
+              {memoriesLoaded && memories.length > 0 && history.length === 0 && (() => {
+                const sod = new Date(); sod.setHours(0, 0, 0, 0)
+                const sodMs = sod.getTime()
+                const todayCount = memories.filter(m => {
+                  const t = m.created_at ? new Date(m.created_at).getTime() : 0
+                  return t >= sodMs
+                }).length
+                if (todayCount === 0) return null
+                return (
+                  <button
+                    onClick={() => setView('memories')}
+                    style={{
+                      marginTop: 14,
+                      display: 'inline-flex', alignItems: 'center', gap: 8,
+                      background: 'var(--accent-soft)',
+                      border: '1px solid var(--border-accent)',
+                      borderRadius: 'var(--r-pill)', padding: '6px 12px 6px 10px',
+                      color: 'var(--accent)',
+                      fontFamily: 'var(--font)', fontSize: 12, fontWeight: 500,
+                      cursor: 'pointer',
+                      transition: 'background 0.2s',
+                    }}
+                  >
+                    <span style={{
+                      width: 6, height: 6, borderRadius: '50%',
+                      background: 'var(--accent)',
+                      boxShadow: '0 0 6px var(--accent-glow)',
+                    }} />
+                    {todayCount} {todayCount === 1 ? 'note' : 'notes'} today · see timeline
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M9 18l6-6-6-6" />
+                    </svg>
+                  </button>
+                )
+              })()}
 
               {pendingNudge && (() => {
                 const isDigest = pendingNudge.kind === 'digest'
@@ -1912,14 +1983,14 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
               />
             </div>
 
-            {/* Text input fallback (always available) */}
+            {/* Type or talk — both are first-class */}
             <form
               onSubmit={(e) => { e.preventDefault(); sendText() }}
               style={{
-                width: '100%', display: 'flex', gap: 6, alignItems: 'center',
+                width: '100%', display: 'flex', gap: 8, alignItems: 'flex-end',
                 background: 'var(--surface-glass)',
                 border: '1px solid var(--border-2)',
-                borderRadius: 'var(--r-lg)', padding: '5px 5px 5px 16px',
+                borderRadius: 'var(--r-lg)', padding: '8px 8px 8px 14px',
                 backdropFilter: 'blur(14px)',
                 WebkitBackdropFilter: 'blur(14px)',
                 transition: 'border-color 0.25s var(--ease-out), box-shadow 0.25s',
@@ -1933,21 +2004,40 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
                 e.currentTarget.style.boxShadow = 'none'
               }}
             >
-              <input
-                type="text"
+              <svg
+                width="16" height="16" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+                style={{ color: 'var(--text-muted)', marginBottom: 10, flexShrink: 0 }}
+              >
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4Z" />
+              </svg>
+              <textarea
                 value={textInput}
                 onChange={(e) => setTextInput(e.target.value)}
-                placeholder={voiceSupported ? 'Or type a message…' : 'Voice not supported — type here'}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    sendText()
+                  }
+                }}
+                placeholder={voiceSupported ? 'Write your entry — or tap the orb to talk' : 'Write your entry…'}
+                rows={1}
                 disabled={orbState === 'thinking'}
                 style={{
                   flex: 1, background: 'transparent', border: 'none', outline: 'none',
                   color: 'var(--text)', fontFamily: 'var(--font)', fontSize: 14.5,
-                  padding: '10px 0', minWidth: 0,
+                  padding: '8px 0', minWidth: 0, resize: 'none',
+                  lineHeight: 1.5, maxHeight: 88,
+                }}
+                onInput={(e) => {
+                  e.currentTarget.style.height = 'auto'
+                  e.currentTarget.style.height = Math.min(88, e.currentTarget.scrollHeight) + 'px'
                 }}
               />
               <button
                 type="submit"
-                aria-label="Send"
+                aria-label="Save entry"
                 disabled={!textInput.trim() || orbState === 'thinking'}
                 style={{
                   background: textInput.trim()
@@ -1955,14 +2045,14 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
                     : 'var(--surface-2)',
                   color: textInput.trim() ? '#001018' : 'var(--text-muted)',
                   border: 'none', borderRadius: 'var(--r-md)',
-                  width: 38, height: 38, padding: 0,
+                  width: 38, height: 38, padding: 0, flexShrink: 0,
                   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                   cursor: textInput.trim() ? 'pointer' : 'default',
                   transition: 'all 0.2s var(--ease-out)',
                   boxShadow: textInput.trim() ? '0 2px 10px rgba(0,229,255,0.3)' : 'none',
                 }}
               >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M5 12h14M13 6l6 6-6 6" />
                 </svg>
               </button>
@@ -1978,7 +2068,7 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
                 <rect x="3" y="11" width="18" height="11" rx="2" />
                 <path d="M7 11V7a5 5 0 0 1 10 0v4" />
               </svg>
-              Private · end-to-end
+              Private · only you see this
             </p>
           </div>
         )}
@@ -1996,13 +2086,13 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
             }}>
               <div>
                 <h2 style={{ fontSize: 22, fontWeight: 600, letterSpacing: '-0.6px', lineHeight: 1.1 }}>
-                  Memory
+                  Your timeline
                 </h2>
                 <p style={{
                   fontSize: 11, color: 'var(--text-muted)', marginTop: 5,
                   fontFamily: 'var(--font-mono)', letterSpacing: '0.04em',
                 }}>
-                  {memories.length} {memories.length === 1 ? 'fact' : 'facts'} · synced
+                  {memories.length} {memories.length === 1 ? 'entry' : 'entries'} · only you
                 </p>
               </div>
               {memories.length > 0 && (
@@ -2041,7 +2131,7 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
                   type="text"
                   value={memorySearch}
                   onChange={(e) => setMemorySearch(e.target.value)}
-                  placeholder="Search memories…"
+                  placeholder="Search your timeline…"
                   style={{
                     width: '100%',
                     background: 'var(--surface-glass)',
@@ -2121,16 +2211,16 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
                         border: '1px solid var(--border-accent)',
                       }}>🌙</div>
                       <p style={{
-                        color: 'var(--text-2)', fontSize: 14, lineHeight: 1.7,
-                        maxWidth: 280, margin: '0 auto', fontWeight: 400,
+                        color: 'var(--text-2)', fontSize: 14.5, lineHeight: 1.6,
+                        maxWidth: 300, margin: '0 auto', fontWeight: 500,
                       }}>
-                        Nothing remembered yet.
+                        Your timeline starts here.
                       </p>
                       <p style={{
-                        color: 'var(--text-muted)', fontSize: 12.5, lineHeight: 1.65,
-                        maxWidth: 280, margin: '6px auto 0',
+                        color: 'var(--text-muted)', fontSize: 12.5, lineHeight: 1.7,
+                        maxWidth: 300, margin: '8px auto 0',
                       }}>
-                        Speak to Memoraa — she'll quietly note things that matter.
+                        Each time you talk to Memoraa, the moments worth keeping land here — names, plans, feelings, dates.
                       </p>
                     </div>
                   )
@@ -2145,16 +2235,86 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
                     </p>
                   )
                 }
-                return filtered.map((m, i) => (
-                  <MemoryChip
-                    key={m.id}
-                    id={m.id}
-                    text={m.fact}
-                    category={m.category}
-                    dueAt={m.due_at}
-                    index={i}
-                    onDelete={deleteMemory}
-                  />
+                // Search results are relevance-ordered, not chronological — render flat.
+                if (memorySearch) {
+                  return filtered.map((m, i) => (
+                    <MemoryChip
+                      key={m.id}
+                      id={m.id}
+                      text={m.fact}
+                      category={m.category}
+                      dueAt={m.due_at}
+                      index={i}
+                      onDelete={deleteMemory}
+                    />
+                  ))
+                }
+
+                // Bucket by recency for the timeline shape
+                const now = Date.now()
+                const startOfToday = new Date()
+                startOfToday.setHours(0, 0, 0, 0)
+                const sodMs = startOfToday.getTime()
+                const buckets = { today: [], yesterday: [], week: [], month: [], earlier: [] }
+                for (const m of filtered) {
+                  const t = m.created_at ? new Date(m.created_at).getTime() : 0
+                  if (t >= sodMs) buckets.today.push(m)
+                  else if (t >= sodMs - 86400000) buckets.yesterday.push(m)
+                  else if (t >= sodMs - 7 * 86400000) buckets.week.push(m)
+                  else if (t >= sodMs - 30 * 86400000) buckets.month.push(m)
+                  else buckets.earlier.push(m)
+                }
+                const sections = [
+                  { key: 'today', label: 'Today', items: buckets.today },
+                  { key: 'yesterday', label: 'Yesterday', items: buckets.yesterday },
+                  { key: 'week', label: 'This week', items: buckets.week },
+                  { key: 'month', label: 'This month', items: buckets.month },
+                  { key: 'earlier', label: 'Earlier', items: buckets.earlier },
+                ].filter(s => s.items.length > 0)
+
+                let globalIdx = 0
+                return sections.map(s => (
+                  <div key={s.key} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div style={{
+                      position: 'sticky', top: 0, zIndex: 1,
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      padding: '8px 0 4px',
+                      background: 'linear-gradient(180deg, rgba(5,7,13,0.95) 0%, rgba(5,7,13,0.85) 70%, rgba(5,7,13,0) 100%)',
+                      backdropFilter: 'blur(4px)',
+                    }}>
+                      <span style={{
+                        fontSize: 10.5, fontFamily: 'var(--font-mono)',
+                        color: 'var(--text-3)', letterSpacing: '0.12em',
+                        textTransform: 'uppercase', fontWeight: 500,
+                      }}>
+                        {s.label}
+                      </span>
+                      <span style={{
+                        flex: 1, height: 1,
+                        background: 'linear-gradient(90deg, var(--border-1), transparent)',
+                      }} />
+                      <span style={{
+                        fontSize: 10, fontFamily: 'var(--font-mono)',
+                        color: 'var(--text-muted)', letterSpacing: '0.04em',
+                      }}>
+                        {s.items.length}
+                      </span>
+                    </div>
+                    {s.items.map(m => {
+                      const i = globalIdx++
+                      return (
+                        <MemoryChip
+                          key={m.id}
+                          id={m.id}
+                          text={m.fact}
+                          category={m.category}
+                          dueAt={m.due_at}
+                          index={i}
+                          onDelete={deleteMemory}
+                        />
+                      )
+                    })}
+                  </div>
                 ))
               })()}
             </div>
@@ -2176,7 +2336,7 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
                 fontSize: 12, color: 'var(--text-muted)', marginTop: 5,
                 fontFamily: 'var(--font-mono)', letterSpacing: '0.02em',
               }}>
-                Personalize how Memoraa speaks to you
+                How your journal speaks back
               </p>
             </div>
 
@@ -2419,12 +2579,12 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
               </span>
               <div style={{ flex: 1 }}>
                 <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 3 }}>
-                  {voiceSupported ? 'Voice input ready' : 'Voice input unavailable'}
+                  {voiceSupported ? 'Voice journaling on' : 'Type-only mode'}
                 </p>
                 <p style={{ fontSize: 11.5, color: 'var(--text-3)', lineHeight: 1.5 }}>
                   {voiceSupported
-                    ? 'Tap the orb to speak. Tap again to stop.'
-                    : 'This browser doesn\'t support speech recognition. Use the text box, or open in Chrome.'}
+                    ? 'Tap the orb to speak, or type below. Both are saved the same way.'
+                    : 'This browser can\'t record audio — typed entries still work. Open in Chrome for voice.'}
                 </p>
               </div>
             </div>

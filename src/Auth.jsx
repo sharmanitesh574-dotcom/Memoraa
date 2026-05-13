@@ -275,8 +275,10 @@ export default function Auth() {
         <p style={{
           color: 'var(--text-3, rgba(238,243,251,0.55))',
           fontSize: 14, fontWeight: 400, letterSpacing: '0.01em',
+          lineHeight: 1.5, maxWidth: 320, margin: '0 auto',
         }}>
-          Your private AI memory layer.
+          Your private voice journal.<br />
+          Two minutes a day. I remember what matters.
         </p>
       </div>
 
