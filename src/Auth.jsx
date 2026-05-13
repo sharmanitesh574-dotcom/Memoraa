@@ -31,32 +31,48 @@ function classifyIdentifier(raw) {
 
 // ── Styled atoms ──────────────────────────────────────────────
 const fieldStyle = {
-  background: 'rgba(13,21,37,0.6)',
-  border: '1px solid rgba(0,212,255,0.18)',
-  borderRadius: 12, padding: '14px 16px',
-  color: '#e8f0fe', fontFamily: "'Sora', sans-serif",
+  background: 'var(--surface-glass, rgba(13,21,37,0.55))',
+  border: '1px solid var(--border-2, rgba(255,255,255,0.1))',
+  borderRadius: 'var(--r-md, 12px)', padding: '14px 16px',
+  color: 'var(--text, #eef3fb)', fontFamily: "'Sora', sans-serif",
   fontSize: 15, outline: 'none', width: '100%',
+  transition: 'border-color 0.2s, box-shadow 0.2s',
+}
+
+const fieldFocus = (e) => {
+  e.currentTarget.style.borderColor = 'var(--border-accent-strong, rgba(0,229,255,0.32))'
+  e.currentTarget.style.boxShadow = '0 0 0 3px rgba(0,229,255,0.08)'
+}
+const fieldBlur = (e) => {
+  e.currentTarget.style.borderColor = 'var(--border-2, rgba(255,255,255,0.1))'
+  e.currentTarget.style.boxShadow = 'none'
 }
 
 const primaryBtn = {
-  background: 'var(--cyan, #00e5ff)', color: '#000', border: 'none',
-  borderRadius: 12, padding: '13px 18px',
-  fontFamily: "'Sora', sans-serif", fontSize: 14, fontWeight: 600,
-  cursor: 'pointer', width: '100%', transition: 'all 0.2s',
+  background: 'linear-gradient(135deg, #00e5ff 0%, #1a6fff 100%)',
+  color: '#001018', border: 'none',
+  borderRadius: 'var(--r-md, 12px)', padding: '14px 18px',
+  fontFamily: "'Sora', sans-serif", fontSize: 14.5, fontWeight: 600,
+  letterSpacing: '0.01em',
+  cursor: 'pointer', width: '100%',
+  transition: 'transform 0.15s var(--ease-out, cubic-bezier(0.22,1,0.36,1)), box-shadow 0.2s',
+  boxShadow: '0 6px 24px rgba(0,229,255,0.28), inset 0 1px 0 rgba(255,255,255,0.25)',
 }
 
 const ghostBtn = {
-  background: 'transparent', color: '#5a7090', border: '1px solid rgba(255,255,255,0.06)',
-  borderRadius: 10, padding: '10px 14px',
-  fontFamily: "'Space Mono', monospace", fontSize: 12,
-  cursor: 'pointer', transition: 'all 0.2s',
+  background: 'transparent', color: 'var(--text-3, rgba(238,243,251,0.55))',
+  border: '1px solid var(--border-1, rgba(255,255,255,0.06))',
+  borderRadius: 'var(--r-md, 12px)', padding: '11px 14px',
+  fontFamily: "'Sora', sans-serif", fontSize: 12.5,
+  cursor: 'pointer', transition: 'background 0.2s, color 0.2s',
 }
 
 const labelStyle = {
-  fontSize: 11, color: '#5a7090',
-  fontFamily: "'Space Mono', monospace",
-  letterSpacing: '0.08em', textTransform: 'uppercase',
-  marginBottom: 6, display: 'block',
+  fontSize: 11, color: 'var(--text-3, rgba(238,243,251,0.55))',
+  fontFamily: "'JetBrains Mono', monospace",
+  letterSpacing: '0.1em', textTransform: 'uppercase',
+  marginBottom: 8, display: 'block',
+  fontWeight: 500,
 }
 
 // ── Auth screen ───────────────────────────────────────────────
@@ -226,39 +242,73 @@ export default function Auth() {
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
       padding: '24px', maxWidth: 440, margin: '0 auto',
     }}>
+      {/* Ambient glow behind card */}
+      <div style={{
+        position: 'absolute', top: '20%', left: '50%',
+        transform: 'translateX(-50%)',
+        width: 360, height: 360, borderRadius: '50%',
+        background: 'radial-gradient(circle, rgba(0,229,255,0.18) 0%, transparent 60%)',
+        filter: 'blur(60px)',
+        pointerEvents: 'none', zIndex: 0,
+      }} />
+
       {/* Brand */}
-      <div style={{ textAlign: 'center', marginBottom: 36 }}>
+      <div style={{ textAlign: 'center', marginBottom: 36, position: 'relative', zIndex: 1 }}>
+        {/* Mini orb */}
+        <div style={{
+          width: 56, height: 56, borderRadius: '50%',
+          margin: '0 auto 18px',
+          background: 'radial-gradient(circle at 36% 32%, #b6f3ff 0%, #00e5ff 30%, #1a6fff 62%, #4a2d7a 90%)',
+          boxShadow: '0 0 36px rgba(0,229,255,0.4), inset 0 1px 0 rgba(255,255,255,0.3), inset 0 -8px 16px rgba(0,0,0,0.3)',
+          animation: 'breathe 4s var(--ease-in-out) infinite',
+        }} />
         <h1 style={{
-          fontSize: 38, fontWeight: 300, letterSpacing: '-1px',
-          background: 'linear-gradient(135deg, #00e5ff 0%, #7b5ea7 50%, #e8f0fe 100%)',
+          fontSize: 40, fontWeight: 300, letterSpacing: '-1.2px',
+          background: 'linear-gradient(120deg, #b6f3ff 0%, #00e5ff 30%, #7b5ea7 65%, #eef3fb 100%)',
+          backgroundSize: '220% auto',
           WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
-          backgroundClip: 'text', marginBottom: 8,
+          backgroundClip: 'text', marginBottom: 8, lineHeight: 1.1,
+          animation: 'shimmer 7s linear infinite',
         }}>
           Memoraa
         </h1>
-        <p style={{ color: '#5a7090', fontSize: 13, fontWeight: 300 }}>
+        <p style={{
+          color: 'var(--text-3, rgba(238,243,251,0.55))',
+          fontSize: 14, fontWeight: 400, letterSpacing: '0.01em',
+        }}>
           Your private AI memory layer.
         </p>
       </div>
 
       <div style={{
-        width: '100%',
-        background: 'rgba(13,21,37,0.6)',
-        border: '1px solid rgba(0,212,255,0.12)',
-        borderRadius: 18, padding: 24,
-        backdropFilter: 'blur(12px)',
+        width: '100%', position: 'relative', zIndex: 1,
+        background: 'var(--surface-glass, rgba(13,21,37,0.55))',
+        border: '1px solid var(--border-2, rgba(255,255,255,0.1))',
+        borderRadius: 22, padding: 24,
+        backdropFilter: 'blur(20px) saturate(160%)',
+        WebkitBackdropFilter: 'blur(20px) saturate(160%)',
+        boxShadow: '0 12px 40px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.04)',
       }}>
         {/* Mode toggle */}
-        <div style={{ display: 'flex', gap: 6, marginBottom: 22, background: 'rgba(255,255,255,0.03)', padding: 4, borderRadius: 12 }}>
+        <div style={{
+          display: 'flex', gap: 4, marginBottom: 22,
+          background: 'rgba(255,255,255,0.04)',
+          padding: 4, borderRadius: 12,
+          border: '1px solid rgba(255,255,255,0.04)',
+        }}>
           {['signup', 'signin'].map(m => (
             <button key={m} onClick={() => switchMode(m)} style={{
               flex: 1,
-              background: mode === m ? 'rgba(0,229,255,0.12)' : 'transparent',
+              background: mode === m
+                ? 'linear-gradient(135deg, rgba(0,229,255,0.18) 0%, rgba(26,111,255,0.12) 100%)'
+                : 'transparent',
               border: `1px solid ${mode === m ? 'rgba(0,229,255,0.3)' : 'transparent'}`,
               borderRadius: 9, padding: '10px 14px',
-              color: mode === m ? '#00e5ff' : '#5a7090',
-              fontFamily: "'Sora', sans-serif", fontSize: 13, fontWeight: 600,
-              cursor: 'pointer', transition: 'all 0.2s',
+              color: mode === m ? '#00e5ff' : 'var(--text-3, rgba(238,243,251,0.55))',
+              fontFamily: "'Sora', sans-serif", fontSize: 13.5, fontWeight: 600,
+              cursor: 'pointer',
+              transition: 'all 0.25s cubic-bezier(0.22, 1, 0.36, 1)',
+              boxShadow: mode === m ? '0 2px 12px rgba(0,229,255,0.15)' : 'none',
             }}>
               {m === 'signup' ? 'Sign up' : 'Sign in'}
             </button>
@@ -267,7 +317,7 @@ export default function Auth() {
 
         {/* Step 1: identifier */}
         {step === 'identifier' && (
-          <form onSubmit={submitIdentifier} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <form onSubmit={submitIdentifier} style={{ display: 'flex', flexDirection: 'column', gap: 14, animation: 'fadeUp 0.35s var(--ease-spring, cubic-bezier(0.16,1,0.3,1))' }}>
             <div>
               <label style={labelStyle}>Email or mobile number</label>
               <input
@@ -278,11 +328,19 @@ export default function Auth() {
                 autoFocus
                 autoComplete={mode === 'signup' ? 'email' : 'username'}
                 style={fieldStyle}
+                onFocus={fieldFocus}
+                onBlur={fieldBlur}
               />
             </div>
-            {error && <p style={{ color: 'rgba(255,100,100,0.8)', fontSize: 12 }}>{error}</p>}
-            <button type="submit" disabled={busy} style={{ ...primaryBtn, opacity: busy ? 0.6 : 1 }}>
-              {busy ? '...' : 'Continue'}
+            {error && <p style={{ color: '#ff6b8a', fontSize: 12.5, lineHeight: 1.4 }}>{error}</p>}
+            <button
+              type="submit" disabled={busy}
+              style={{ ...primaryBtn, opacity: busy ? 0.5 : 1 }}
+              onMouseDown={(e) => !busy && (e.currentTarget.style.transform = 'scale(0.985)')}
+              onMouseUp={(e) => (e.currentTarget.style.transform = 'scale(1)')}
+              onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
+            >
+              {busy ? 'Sending…' : 'Continue'}
             </button>
             <div id="clerk-captcha" />
           </form>
@@ -290,7 +348,7 @@ export default function Auth() {
 
         {/* Step 2: username (signup only) */}
         {step === 'username' && (
-          <form onSubmit={(e) => { e.preventDefault(); submitUsername() }} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <form onSubmit={(e) => { e.preventDefault(); submitUsername() }} style={{ display: 'flex', flexDirection: 'column', gap: 14, animation: 'fadeUp 0.35s var(--ease-spring, cubic-bezier(0.16,1,0.3,1))' }}>
             <div>
               <label style={labelStyle}>Pick a username</label>
               <input
@@ -300,10 +358,12 @@ export default function Auth() {
                 placeholder="e.g. nitesh_5"
                 autoFocus
                 style={fieldStyle}
+                onFocus={fieldFocus}
+                onBlur={fieldBlur}
               />
             </div>
 
-            {error && <p style={{ color: 'rgba(255,180,80,0.85)', fontSize: 12 }}>{error}</p>}
+            {error && <p style={{ color: 'var(--amber, #ffb454)', fontSize: 12.5, lineHeight: 1.4 }}>{error}</p>}
 
             {suggestions.length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -315,11 +375,13 @@ export default function Auth() {
                     style={{
                       background: 'rgba(0,229,255,0.08)',
                       border: '1px solid rgba(0,229,255,0.25)',
-                      borderRadius: 10, padding: '8px 12px',
+                      borderRadius: 999, padding: '6px 12px',
                       color: '#00e5ff',
-                      fontFamily: "'Space Mono', monospace", fontSize: 12,
-                      cursor: 'pointer',
+                      fontFamily: "'JetBrains Mono', monospace", fontSize: 12,
+                      cursor: 'pointer', transition: 'background 0.2s',
                     }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(0,229,255,0.16)'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(0,229,255,0.08)'}
                   >
                     {s}
                   </button>
@@ -327,8 +389,14 @@ export default function Auth() {
               </div>
             )}
 
-            <button type="submit" disabled={busy} style={{ ...primaryBtn, opacity: busy ? 0.6 : 1 }}>
-              {busy ? '...' : 'Send code'}
+            <button
+              type="submit" disabled={busy}
+              style={{ ...primaryBtn, opacity: busy ? 0.5 : 1 }}
+              onMouseDown={(e) => !busy && (e.currentTarget.style.transform = 'scale(0.985)')}
+              onMouseUp={(e) => (e.currentTarget.style.transform = 'scale(1)')}
+              onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
+            >
+              {busy ? 'Sending…' : 'Send code'}
             </button>
             <button type="button" onClick={() => { setStep('identifier'); setError('') }} style={ghostBtn}>
               ← back
@@ -339,25 +407,40 @@ export default function Auth() {
 
         {/* Step 3: verify */}
         {step === 'verify' && (
-          <form onSubmit={submitCode} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <form onSubmit={submitCode} style={{ display: 'flex', flexDirection: 'column', gap: 14, animation: 'fadeUp 0.35s var(--ease-spring, cubic-bezier(0.16,1,0.3,1))' }}>
             <div>
               <label style={labelStyle}>
-                Code sent to {identifier}
+                Code sent to <span style={{ color: 'var(--text-2, rgba(238,243,251,0.78))', textTransform: 'none', letterSpacing: 0 }}>{identifier}</span>
               </label>
               <input
                 type="text"
                 inputMode="numeric"
                 value={code}
                 onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, '').slice(0, 8))}
-                placeholder="6-digit code"
+                placeholder="••••••"
                 autoFocus
                 autoComplete="one-time-code"
-                style={{ ...fieldStyle, fontFamily: "'Space Mono', monospace", letterSpacing: '0.3em', textAlign: 'center' }}
+                style={{
+                  ...fieldStyle,
+                  fontFamily: "'JetBrains Mono', monospace",
+                  letterSpacing: '0.5em',
+                  textAlign: 'center',
+                  fontSize: 22, fontWeight: 500,
+                  paddingLeft: 24,
+                }}
+                onFocus={fieldFocus}
+                onBlur={fieldBlur}
               />
             </div>
-            {error && <p style={{ color: 'rgba(255,100,100,0.8)', fontSize: 12 }}>{error}</p>}
-            <button type="submit" disabled={busy} style={{ ...primaryBtn, opacity: busy ? 0.6 : 1 }}>
-              {busy ? '...' : 'Verify'}
+            {error && <p style={{ color: '#ff6b8a', fontSize: 12.5, lineHeight: 1.4 }}>{error}</p>}
+            <button
+              type="submit" disabled={busy}
+              style={{ ...primaryBtn, opacity: busy ? 0.5 : 1 }}
+              onMouseDown={(e) => !busy && (e.currentTarget.style.transform = 'scale(0.985)')}
+              onMouseUp={(e) => (e.currentTarget.style.transform = 'scale(1)')}
+              onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
+            >
+              {busy ? 'Verifying…' : 'Verify'}
             </button>
             <button type="button" onClick={() => { setStep('identifier'); setCode(''); setError('') }} style={ghostBtn}>
               ← change {identifierType === 'email' ? 'email' : 'phone'}
@@ -367,11 +450,16 @@ export default function Auth() {
       </div>
 
       <p style={{
-        marginTop: 20, fontSize: 10, color: '#3a5070',
-        fontFamily: "'Space Mono', monospace", letterSpacing: '0.12em',
-        textTransform: 'uppercase',
+        marginTop: 22, fontSize: 10, color: 'var(--text-muted, rgba(238,243,251,0.38))',
+        fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.14em',
+        textTransform: 'uppercase', position: 'relative', zIndex: 1,
+        display: 'flex', alignItems: 'center', gap: 6,
       }}>
-        🔒 End-to-end private · your memories belong to you
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3" y="11" width="18" height="11" rx="2" />
+          <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+        </svg>
+        End-to-end private
       </p>
     </div>
   )

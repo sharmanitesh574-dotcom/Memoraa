@@ -45,31 +45,43 @@ const DEFAULT_VOICE = 'nova'
 // Keep conversation context bounded — long-term info lives in `memories`
 const MAX_HISTORY_MESSAGES = 16
 
-// ── Grain overlay ──────────────────────────────────────────────
-function GrainOverlay() {
-  return (
-    <div style={{
-      position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 0,
-      backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E")`,
-      backgroundSize: '180px', opacity: 0.35,
-      animation: 'grain 10s steps(1) infinite',
-    }} />
-  )
-}
-
-// ── Ambient bg ─────────────────────────────────────────────────
-function AmbientBg({ state }) {
-  const color = state === 'listening' ? 'rgba(0,229,255,0.09)' :
-    state === 'thinking' ? 'rgba(123,94,167,0.09)' :
-    state === 'speaking' ? 'rgba(0,255,136,0.06)' :
-    'rgba(0,212,255,0.05)'
+// ── Aurora background (replaces grain + ambient) ───────────────
+function Aurora({ state }) {
+  // Subtle state-tinted aurora that drifts behind the orb.
+  const tint = state === 'listening' ? '#00e5ff'
+    : state === 'thinking' ? '#7b5ea7'
+    : state === 'speaking' ? '#00ff9d'
+    : '#1a6fff'
 
   return (
-    <div style={{
-      position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 0,
-      background: `radial-gradient(ellipse 70% 55% at 50% 85%, ${color} 0%, transparent 70%)`,
-      transition: 'background 1s ease',
-    }} />
+    <>
+      {/* Deep base gradient */}
+      <div style={{
+        position: 'fixed', inset: 0, zIndex: 0, pointerEvents: 'none',
+        background: 'radial-gradient(ellipse 80% 60% at 50% 100%, rgba(26,111,255,0.12) 0%, transparent 60%), radial-gradient(ellipse 60% 50% at 0% 0%, rgba(123,94,167,0.08) 0%, transparent 55%), linear-gradient(180deg, #03050a 0%, #05070d 100%)',
+      }} />
+
+      {/* Drifting state-tinted aurora */}
+      <div style={{
+        position: 'fixed', inset: '-10%', zIndex: 0, pointerEvents: 'none',
+        background: `radial-gradient(ellipse 50% 40% at 50% 80%, ${tint}22 0%, transparent 65%)`,
+        filter: 'blur(40px)',
+        animation: 'aurora-drift 18s ease-in-out infinite',
+        transition: 'background 1.2s var(--ease-out)',
+      }} />
+
+      {/* Whisper-thin starfield */}
+      <div style={{
+        position: 'fixed', inset: 0, zIndex: 0, pointerEvents: 'none', opacity: 0.5,
+        backgroundImage:
+          'radial-gradient(1px 1px at 17% 28%, rgba(255,255,255,0.6) 50%, transparent 100%),' +
+          'radial-gradient(1px 1px at 73% 14%, rgba(255,255,255,0.45) 50%, transparent 100%),' +
+          'radial-gradient(1px 1px at 41% 67%, rgba(255,255,255,0.35) 50%, transparent 100%),' +
+          'radial-gradient(1px 1px at 88% 82%, rgba(255,255,255,0.5) 50%, transparent 100%),' +
+          'radial-gradient(1px 1px at 24% 91%, rgba(255,255,255,0.4) 50%, transparent 100%)',
+        animation: 'star-twinkle 7s ease-in-out infinite',
+      }} />
+    </>
   )
 }
 
@@ -77,9 +89,10 @@ function AmbientBg({ state }) {
 function WaveBar({ delay }) {
   return (
     <div style={{
-      width: 3, height: 20, borderRadius: 2,
-      background: 'rgba(0,229,255,0.7)',
-      animation: `speaking-wave 0.8s ease-in-out ${delay}s infinite`,
+      width: 3, height: 22, borderRadius: 999,
+      background: 'linear-gradient(180deg, #00e5ff 0%, #1a6fff 100%)',
+      boxShadow: '0 0 8px rgba(0,229,255,0.6)',
+      animation: `speaking-wave 0.85s var(--ease-in-out) ${delay}s infinite`,
       transformOrigin: 'center',
     }} />
   )
@@ -92,26 +105,31 @@ function Orb({ state, onClick }) {
   const isSpeaking = state === 'speaking'
 
   const orbGradient = isThinking
-    ? 'conic-gradient(from 0deg, #00d4ff, #7b5ea7, #1a6fff, #00d4ff)'
+    ? 'conic-gradient(from 210deg, #00e5ff 0deg, #7b5ea7 120deg, #1a6fff 240deg, #00e5ff 360deg)'
     : isSpeaking
-    ? 'radial-gradient(circle at 40% 38%, #00ff88 0%, #00d4ff 30%, #1a6fff 60%, #7b5ea7 85%, #0d1525 100%)'
-    : 'radial-gradient(circle at 38% 36%, #00d4ff 0%, #1a6fff 35%, #7b5ea7 65%, #0d1525 100%)'
+    ? 'radial-gradient(circle at 38% 34%, #b6ffe6 0%, #00ff9d 22%, #00d4ff 50%, #1a6fff 78%, #1a1238 100%)'
+    : isListening
+    ? 'radial-gradient(circle at 38% 34%, #b6f3ff 0%, #00e5ff 30%, #1a6fff 65%, #2a1a55 100%)'
+    : 'radial-gradient(circle at 36% 32%, #9eeaff 0%, #00bfff 32%, #1a6fff 62%, #4a2d7a 88%, #0d1525 100%)'
 
   return (
-    <div
+    <button
+      type="button"
       onClick={onClick}
+      aria-label={state === 'idle' ? 'Tap to start listening' : state === 'listening' ? 'Tap to stop' : 'Tap to interrupt'}
       style={{
-        position: 'relative', width: 210, height: 210,
-        cursor: 'pointer', flexShrink: 0,
-        userSelect: 'none', WebkitUserSelect: 'none',
+        position: 'relative', width: 220, height: 220,
+        background: 'transparent', border: 'none', padding: 0,
+        flexShrink: 0, userSelect: 'none', WebkitUserSelect: 'none',
+        borderRadius: '50%',
       }}
     >
       {/* Idle pulse rings */}
       {state === 'idle' && [0, 1].map(i => (
         <div key={i} style={{
-          position: 'absolute', inset: -18, borderRadius: '50%',
-          border: '1px solid rgba(0,212,255,0.18)',
-          animation: `pulse-ring 3.5s ease-out ${i * 1.75}s infinite`,
+          position: 'absolute', inset: -22, borderRadius: '50%',
+          border: '1px solid rgba(0, 229, 255, 0.16)',
+          animation: `pulse-ring 4s var(--ease-out) ${i * 2}s infinite`,
           pointerEvents: 'none',
         }} />
       ))}
@@ -119,41 +137,72 @@ function Orb({ state, onClick }) {
       {/* Listening rings */}
       {isListening && [0, 1, 2].map(i => (
         <div key={i} style={{
-          position: 'absolute', inset: -12, borderRadius: '50%',
-          border: `1px solid rgba(0,229,255,${0.6 - i * 0.15})`,
-          animation: `listen-ring 1.4s ease-out ${i * 0.45}s infinite`,
+          position: 'absolute', inset: -16, borderRadius: '50%',
+          border: `1.5px solid rgba(0, 229, 255, ${0.55 - i * 0.14})`,
+          animation: `listen-ring 1.5s var(--ease-out) ${i * 0.5}s infinite`,
           pointerEvents: 'none',
         }} />
       ))}
+
+      {/* Outer halo */}
+      <div style={{
+        position: 'absolute', inset: -40, borderRadius: '50%',
+        background: isListening
+          ? 'radial-gradient(circle, rgba(0,229,255,0.25) 0%, transparent 60%)'
+          : isSpeaking
+          ? 'radial-gradient(circle, rgba(0,255,157,0.22) 0%, transparent 60%)'
+          : isThinking
+          ? 'radial-gradient(circle, rgba(123,94,167,0.25) 0%, transparent 60%)'
+          : 'radial-gradient(circle, rgba(0,212,255,0.15) 0%, transparent 60%)',
+        filter: 'blur(20px)',
+        transition: 'background 0.8s var(--ease-out)',
+        pointerEvents: 'none',
+      }} />
 
       {/* Orb body */}
       <div style={{
         position: 'absolute', inset: 0, borderRadius: '50%',
         background: orbGradient,
         animation: isThinking
-          ? 'thinking 2s linear infinite, breathe 2.5s ease-in-out infinite'
-          : 'breathe 4s ease-in-out infinite',
+          ? 'thinking-orbit 2.2s linear infinite, breathe 2.6s var(--ease-in-out) infinite'
+          : 'breathe 4.2s var(--ease-in-out) infinite',
         boxShadow: isListening
-          ? '0 0 90px 25px rgba(0,229,255,0.35), 0 0 180px 55px rgba(123,94,167,0.2), inset 0 0 40px rgba(0,229,255,0.1)'
+          ? '0 0 80px 18px rgba(0,229,255,0.42), 0 0 200px 60px rgba(123,94,167,0.18), inset 0 0 60px rgba(255,255,255,0.08), inset 0 -20px 60px rgba(0,0,0,0.3)'
           : isSpeaking
-          ? '0 0 90px 25px rgba(0,255,136,0.25), 0 0 180px 55px rgba(0,212,255,0.15)'
-          : '0 0 60px 12px rgba(0,212,255,0.12), 0 0 120px 35px rgba(123,94,167,0.08)',
-        transition: 'box-shadow 0.6s ease, background 0.6s ease',
+          ? '0 0 80px 18px rgba(0,255,157,0.32), 0 0 200px 60px rgba(0,212,255,0.18), inset 0 0 60px rgba(255,255,255,0.1), inset 0 -20px 60px rgba(0,0,0,0.3)'
+          : isThinking
+          ? '0 0 70px 14px rgba(123,94,167,0.32), 0 0 180px 50px rgba(0,212,255,0.12), inset 0 0 60px rgba(255,255,255,0.08), inset 0 -20px 60px rgba(0,0,0,0.3)'
+          : '0 0 60px 10px rgba(0,212,255,0.18), 0 0 140px 40px rgba(123,94,167,0.1), inset 0 0 60px rgba(255,255,255,0.06), inset 0 -20px 60px rgba(0,0,0,0.35)',
+        transition: 'box-shadow 0.8s var(--ease-out), background 0.8s var(--ease-out)',
       }}>
-        {/* Specular highlight */}
+        {/* Specular highlight (top-left) */}
         <div style={{
-          position: 'absolute', top: '16%', left: '20%',
-          width: '36%', height: '28%', borderRadius: '50%',
-          background: 'radial-gradient(circle, rgba(255,255,255,0.32) 0%, transparent 70%)',
-          filter: 'blur(5px)',
+          position: 'absolute', top: '12%', left: '18%',
+          width: '40%', height: '30%', borderRadius: '50%',
+          background: 'radial-gradient(ellipse, rgba(255,255,255,0.42) 0%, rgba(255,255,255,0.1) 45%, transparent 75%)',
+          filter: 'blur(4px)',
           pointerEvents: 'none',
         }} />
-        {/* Secondary glow */}
+        {/* Secondary specular (smaller, brighter) */}
         <div style={{
-          position: 'absolute', bottom: '18%', right: '20%',
-          width: '22%', height: '18%', borderRadius: '50%',
-          background: 'radial-gradient(circle, rgba(123,94,167,0.4) 0%, transparent 70%)',
-          filter: 'blur(8px)',
+          position: 'absolute', top: '18%', left: '26%',
+          width: '14%', height: '10%', borderRadius: '50%',
+          background: 'radial-gradient(circle, rgba(255,255,255,0.85) 0%, transparent 70%)',
+          filter: 'blur(2px)',
+          pointerEvents: 'none',
+        }} />
+        {/* Bottom-right glow */}
+        <div style={{
+          position: 'absolute', bottom: '12%', right: '14%',
+          width: '32%', height: '24%', borderRadius: '50%',
+          background: 'radial-gradient(circle, rgba(123,94,167,0.5) 0%, transparent 70%)',
+          filter: 'blur(10px)',
+          pointerEvents: 'none',
+        }} />
+        {/* Rim light */}
+        <div style={{
+          position: 'absolute', inset: 0, borderRadius: '50%',
+          boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.25), inset 0 -1px 0 rgba(0,0,0,0.4)',
           pointerEvents: 'none',
         }} />
       </div>
@@ -162,15 +211,119 @@ function Orb({ state, onClick }) {
       {isSpeaking && (
         <div style={{
           position: 'absolute', inset: 0, borderRadius: '50%',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
-          animation: 'fadeIn 0.3s ease',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+          animation: 'fadeIn 0.4s var(--ease-out)',
+          pointerEvents: 'none',
         }}>
-          {[0, 0.1, 0.2, 0.1, 0].map((d, i) => (
+          {[0, 0.08, 0.18, 0.08, 0].map((d, i) => (
             <WaveBar key={i} delay={d} />
           ))}
         </div>
       )}
-    </div>
+    </button>
+  )
+}
+
+// ── Bottom tab bar ─────────────────────────────────────────────
+function TabIcon({ name, active }) {
+  const stroke = active ? '#00e5ff' : 'rgba(238,243,251,0.55)'
+  if (name === 'home') {
+    return (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="8" />
+        <circle cx="12" cy="12" r="3.2" fill={active ? '#00e5ff' : 'none'} />
+      </svg>
+    )
+  }
+  if (name === 'memories') {
+    return (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M9 4a3 3 0 0 0-3 3v1a3 3 0 0 0-2 2.8V14a3 3 0 0 0 3 3 3 3 0 0 0 3 3V4z" />
+        <path d="M15 4a3 3 0 0 1 3 3v1a3 3 0 0 1 2 2.8V14a3 3 0 0 1-3 3 3 3 0 0 1-3 3V4z" />
+      </svg>
+    )
+  }
+  // profile
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="8" r="3.5" />
+      <path d="M5 20c1.2-3.4 4-5 7-5s5.8 1.6 7 5" />
+    </svg>
+  )
+}
+
+function BottomNav({ view, setView, memoriesCount, profileInitial }) {
+  const tabs = [
+    { id: 'home', icon: 'home', label: 'Talk' },
+    { id: 'memories', icon: 'memories', label: 'Memory', badge: memoriesCount },
+    { id: 'profile', icon: 'profile', label: profileInitial ? profileInitial : 'You' },
+  ]
+  return (
+    <nav
+      role="tablist"
+      style={{
+        position: 'absolute', left: 0, right: 0, bottom: 0,
+        display: 'flex', justifyContent: 'space-around',
+        padding: '8px 12px calc(8px + env(safe-area-inset-bottom))',
+        background: 'rgba(5,7,13,0.7)',
+        backdropFilter: 'blur(20px) saturate(140%)',
+        WebkitBackdropFilter: 'blur(20px) saturate(140%)',
+        borderTop: '1px solid var(--border-1)',
+        zIndex: 5,
+      }}
+    >
+      {tabs.map(t => {
+        const active = view === t.id
+        return (
+          <button
+            key={t.id}
+            role="tab"
+            aria-selected={active}
+            onClick={() => setView(t.id)}
+            style={{
+              flex: 1, maxWidth: 96,
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+              padding: '8px 6px',
+              background: 'transparent', border: 'none',
+              color: active ? 'var(--accent)' : 'var(--text-3)',
+              cursor: 'pointer',
+              borderRadius: 'var(--r-md)',
+              transition: 'color 0.25s var(--ease-out), transform 0.2s var(--ease-out)',
+            }}
+          >
+            <span style={{
+              position: 'relative',
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              width: 36, height: 28, borderRadius: 14,
+              background: active ? 'rgba(0,229,255,0.12)' : 'transparent',
+              transition: 'background 0.25s var(--ease-out)',
+            }}>
+              <TabIcon name={t.icon} active={active} />
+              {t.badge > 0 && t.id === 'memories' && (
+                <span style={{
+                  position: 'absolute', top: -2, right: -4,
+                  minWidth: 16, height: 16, padding: '0 4px',
+                  borderRadius: 999,
+                  background: 'var(--accent)', color: '#001018',
+                  fontSize: 9, fontWeight: 700,
+                  fontFamily: 'var(--font)',
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  boxShadow: '0 0 8px rgba(0,229,255,0.5)',
+                }}>
+                  {t.badge > 99 ? '99+' : t.badge}
+                </span>
+              )}
+            </span>
+            <span style={{
+              fontSize: 10, fontWeight: 500, letterSpacing: '0.04em',
+              fontFamily: 'var(--font)',
+            }}>
+              {t.label}
+            </span>
+          </button>
+        )
+      })}
+    </nav>
   )
 }
 
@@ -201,63 +354,81 @@ function MemoryChip({ id, text, category, dueAt, index, onDelete }) {
     if (diff < 7) return `in ${diff}d`
     return d.toISOString().slice(0, 10)
   })()
+  const isOverdue = dueLabel && /ago|yesterday/.test(dueLabel)
 
   return (
     <div
       onMouseEnter={() => setHovering(true)}
       onMouseLeave={() => setHovering(false)}
       style={{
-        background: 'rgba(0,212,255,0.04)',
-        border: '1px solid rgba(0,212,255,0.12)',
-        borderRadius: 12, padding: '12px 14px',
-        animation: `fadeUp 0.35s ease ${Math.min(index, 8) * 0.04}s both`,
-        position: 'relative', transition: 'border-color 0.2s',
-        borderColor: hovering ? 'rgba(0,212,255,0.25)' : 'rgba(0,212,255,0.12)',
+        background: hovering ? 'var(--surface-2)' : 'var(--surface-1)',
+        border: `1px solid ${hovering ? 'var(--border-2)' : 'var(--border-1)'}`,
+        borderRadius: 'var(--r-md)', padding: '13px 14px',
+        animation: `fadeUp 0.4s var(--ease-spring) ${Math.min(index, 8) * 0.035}s both`,
+        position: 'relative',
+        transition: 'background 0.2s var(--ease-out), border-color 0.2s, transform 0.2s',
+        transform: hovering ? 'translateY(-1px)' : 'translateY(0)',
+        boxShadow: hovering ? 'var(--elev-2)' : 'none',
       }}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-        <div style={{ flex: 1 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
-            <span style={{
-              color: 'rgba(0,229,255,0.45)', fontFamily: "'Space Mono', monospace",
-              fontSize: 9, letterSpacing: '0.08em',
-            }}>
-              MEM·{String(index + 1).padStart(3, '0')}
-            </span>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
             {meta && (
               <span style={{
-                fontSize: 9, fontFamily: "'Space Mono', monospace",
-                color: meta.color, letterSpacing: '0.05em', textTransform: 'uppercase',
+                fontSize: 10, fontFamily: 'var(--font-mono)',
+                color: meta.color, letterSpacing: '0.06em', textTransform: 'uppercase',
+                fontWeight: 500,
+                display: 'inline-flex', alignItems: 'center', gap: 4,
               }}>
-                {meta.icon} {category}
+                <span style={{ fontSize: 11 }}>{meta.icon}</span>{category}
               </span>
             )}
             {dueLabel && (
               <span style={{
-                fontSize: 9, fontFamily: "'Space Mono', monospace",
-                color: 'rgba(255,200,120,0.85)', letterSpacing: '0.05em',
-                background: 'rgba(255,200,120,0.08)',
-                padding: '1px 6px', borderRadius: 6,
+                fontSize: 10, fontFamily: 'var(--font-mono)',
+                color: isOverdue ? 'var(--rose)' : 'var(--amber)',
+                letterSpacing: '0.04em', fontWeight: 500,
+                background: isOverdue ? 'rgba(255,107,138,0.1)' : 'rgba(255,180,84,0.1)',
+                border: `1px solid ${isOverdue ? 'rgba(255,107,138,0.25)' : 'rgba(255,180,84,0.22)'}`,
+                padding: '1px 7px', borderRadius: 'var(--r-sm)',
               }}>
                 {dueLabel}
               </span>
             )}
+            <span style={{
+              color: 'var(--text-faint)', fontFamily: 'var(--font-mono)',
+              fontSize: 9, letterSpacing: '0.1em', marginLeft: 'auto',
+            }}>
+              #{String(index + 1).padStart(3, '0')}
+            </span>
           </div>
-          <p style={{ fontSize: 13, color: 'rgba(232,240,254,0.82)', lineHeight: 1.55 }}>
+          <p style={{
+            fontSize: 14, color: 'var(--text-2)', lineHeight: 1.55,
+            wordBreak: 'break-word',
+          }}>
             {text}
           </p>
         </div>
         {hovering && (
           <button
             onClick={() => onDelete(id)}
+            aria-label="Delete memory"
             style={{
-              background: 'rgba(255,60,60,0.1)', border: '1px solid rgba(255,60,60,0.2)',
-              borderRadius: 6, padding: '3px 7px', color: 'rgba(255,100,100,0.7)',
-              fontSize: 10, cursor: 'pointer', fontFamily: "'Space Mono', monospace",
-              flexShrink: 0,
+              background: 'rgba(255,107,138,0.08)',
+              border: '1px solid rgba(255,107,138,0.2)',
+              borderRadius: 'var(--r-sm)', padding: 0,
+              width: 26, height: 26,
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              color: 'var(--rose)', cursor: 'pointer',
+              flexShrink: 0, transition: 'background 0.2s',
             }}
+            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,107,138,0.16)'}
+            onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255,107,138,0.08)'}
           >
-            del
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+            </svg>
           </button>
         )}
       </div>
@@ -266,18 +437,49 @@ function MemoryChip({ id, text, category, dueAt, index, onDelete }) {
 }
 
 // ── Reply bubble ───────────────────────────────────────────────
-function ReplyBubble({ text }) {
+function ReplyBubble({ text, streaming }) {
   if (!text) return null
   return (
     <div style={{
-      background: 'rgba(13,21,37,0.8)',
-      border: '1px solid rgba(0,212,255,0.1)',
-      borderRadius: 16, padding: '14px 18px',
-      animation: 'slideUp 0.4s cubic-bezier(0.16,1,0.3,1)',
-      backdropFilter: 'blur(12px)',
+      position: 'relative',
+      background: 'linear-gradient(180deg, rgba(13,21,37,0.85) 0%, rgba(13,21,37,0.65) 100%)',
+      border: '1px solid var(--border-accent)',
+      borderRadius: 'var(--r-lg)', padding: '14px 16px 16px',
+      animation: 'slideUp 0.45s var(--ease-spring)',
+      backdropFilter: 'blur(16px) saturate(140%)',
+      WebkitBackdropFilter: 'blur(16px) saturate(140%)',
+      boxShadow: 'var(--elev-2)',
     }}>
-      <p style={{ fontSize: 14, lineHeight: 1.7, color: 'rgba(232,240,254,0.88)' }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6,
+      }}>
+        <span style={{
+          width: 6, height: 6, borderRadius: '50%',
+          background: 'var(--accent)',
+          boxShadow: '0 0 8px var(--accent-glow)',
+        }} />
+        <span style={{
+          fontSize: 10, fontFamily: 'var(--font-mono)',
+          color: 'var(--accent)', letterSpacing: '0.12em', textTransform: 'uppercase',
+        }}>
+          Memoraa
+        </span>
+      </div>
+      <p style={{
+        fontSize: 15, lineHeight: 1.55,
+        color: 'var(--text)',
+        fontWeight: 400,
+      }}>
         {text}
+        {streaming && (
+          <span style={{
+            display: 'inline-block', width: 7, height: 14,
+            background: 'var(--accent)', marginLeft: 3,
+            verticalAlign: 'text-bottom',
+            animation: 'caret-blink 1s steps(1) infinite',
+            borderRadius: 1,
+          }} />
+        )}
       </p>
     </div>
   )
@@ -291,8 +493,8 @@ export default function App() {
     return (
       <div style={{ height: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <div style={{ width: 36, height: 36, borderRadius: '50%',
-          border: '2px solid rgba(0,229,255,0.2)', borderTopColor: '#00e5ff',
-          animation: 'thinking 1s linear infinite' }} />
+          border: '2px solid rgba(0,229,255,0.18)', borderTopColor: '#00e5ff',
+          animation: 'spin 1s linear infinite' }} />
       </div>
     )
   }
@@ -1246,31 +1448,36 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
 
   return (
     <div style={{ position: 'relative', height: '100dvh', overflow: 'hidden' }}>
-      <GrainOverlay />
-      <AmbientBg state={orbState} />
+      <Aurora state={orbState} />
 
       {/* PWA install banner */}
       {showInstallBanner && (
         <div style={{
           position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100,
-          background: 'rgba(13,21,37,0.95)', borderBottom: '1px solid rgba(0,212,255,0.15)',
+          background: 'rgba(5,7,13,0.85)',
+          borderBottom: '1px solid var(--border-accent)',
           padding: '12px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          backdropFilter: 'blur(12px)',
+          backdropFilter: 'blur(20px) saturate(140%)',
+          WebkitBackdropFilter: 'blur(20px) saturate(140%)',
         }}>
-          <span style={{ fontSize: 13, color: 'rgba(232,240,254,0.8)' }}>
+          <span style={{ fontSize: 13, color: 'var(--text-2)', fontWeight: 400 }}>
             Add Memoraa to your home screen
           </span>
           <div style={{ display: 'flex', gap: 8 }}>
             <button onClick={handleInstall} style={{
-              background: 'var(--cyan)', color: '#000', border: 'none',
-              borderRadius: 8, padding: '6px 14px', fontSize: 12,
-              fontFamily: "'Sora', sans-serif", fontWeight: 600, cursor: 'pointer',
+              background: 'linear-gradient(135deg, #00e5ff 0%, #1a6fff 100%)',
+              color: '#001018', border: 'none',
+              borderRadius: 'var(--r-sm)', padding: '7px 14px', fontSize: 12,
+              fontFamily: 'var(--font)', fontWeight: 600, cursor: 'pointer',
+              boxShadow: '0 2px 10px rgba(0,229,255,0.3)',
             }}>Install</button>
-            <button onClick={() => setShowInstallBanner(false)} style={{
-              background: 'transparent', border: '1px solid rgba(255,255,255,0.1)',
-              borderRadius: 8, padding: '6px 10px', color: 'var(--muted-light)',
-              fontSize: 12, cursor: 'pointer',
-            }}>✕</button>
+            <button onClick={() => setShowInstallBanner(false)}
+              aria-label="Dismiss install banner"
+              style={{
+                background: 'transparent', border: '1px solid var(--border-2)',
+                borderRadius: 'var(--r-sm)', padding: '7px 10px', color: 'var(--text-3)',
+                fontSize: 12, cursor: 'pointer',
+              }}>✕</button>
           </div>
         </div>
       )}
@@ -1281,76 +1488,41 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
         display: 'flex', flexDirection: 'column',
         maxWidth: 500, margin: '0 auto',
         paddingTop: showInstallBanner ? 54 : 0,
+        paddingBottom: 'calc(64px + env(safe-area-inset-bottom))',
       }}>
 
         {/* Header */}
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '20px 24px 10px',
+          padding: '18px 24px 6px',
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <div style={{
-              width: 7, height: 7, borderRadius: '50%',
+              width: 8, height: 8, borderRadius: '50%',
               background: orbState === 'idle' ? '#00e5ff'
-                : orbState === 'listening' ? '#00ff88'
-                : orbState === 'thinking' ? '#ffaa00'
-                : '#00ff88',
-              boxShadow: `0 0 10px currentColor`,
-              transition: 'background 0.4s ease',
+                : orbState === 'listening' ? '#00ff9d'
+                : orbState === 'thinking' ? '#ffb454'
+                : '#00ff9d',
+              boxShadow: '0 0 12px currentColor',
+              transition: 'background 0.4s var(--ease-out)',
               flexShrink: 0,
             }} />
             <span style={{
-              fontWeight: 600, fontSize: 18, letterSpacing: '-0.4px',
-              fontFamily: "'Sora', sans-serif",
+              fontWeight: 600, fontSize: 17, letterSpacing: '-0.3px',
+              fontFamily: 'var(--font)',
             }}>
               Memoraa
             </span>
-          </div>
-
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <button
-              onClick={() => setView('home')}
-              aria-label="Home"
-              style={{
-                background: view === 'home' ? 'rgba(0,229,255,0.1)' : 'var(--pill)',
-                border: `1px solid ${view === 'home' ? 'rgba(0,229,255,0.25)' : 'var(--pill-border)'}`,
-                borderRadius: 20, padding: '6px 12px',
-                color: view === 'home' ? '#00e5ff' : 'var(--muted-light)',
-                fontSize: 12, fontFamily: "'Space Mono', monospace",
-                cursor: 'pointer', transition: 'all 0.25s',
-              }}
-            >
-              ⌂
-            </button>
-            <button
-              onClick={() => setView('memories')}
-              aria-label="Memories"
-              style={{
-                background: view === 'memories' ? 'rgba(0,229,255,0.1)' : 'var(--pill)',
-                border: `1px solid ${view === 'memories' ? 'rgba(0,229,255,0.25)' : 'var(--pill-border)'}`,
-                borderRadius: 20, padding: '6px 12px',
-                color: view === 'memories' ? '#00e5ff' : 'var(--muted-light)',
-                fontSize: 12, fontFamily: "'Space Mono', monospace",
-                cursor: 'pointer', transition: 'all 0.25s',
-                display: 'flex', alignItems: 'center', gap: 5,
-              }}
-            >
-              🧠 {memories.length}
-            </button>
-            <button
-              onClick={() => setView('profile')}
-              aria-label="Profile and settings"
-              style={{
-                background: view === 'profile' ? 'rgba(0,229,255,0.1)' : 'var(--pill)',
-                border: `1px solid ${view === 'profile' ? 'rgba(0,229,255,0.25)' : 'var(--pill-border)'}`,
-                borderRadius: 20, padding: '6px 12px',
-                color: view === 'profile' ? '#00e5ff' : 'var(--muted-light)',
-                fontSize: 12, fontFamily: "'Space Mono', monospace",
-                cursor: 'pointer', transition: 'all 0.25s',
-              }}
-            >
-              {profile.name ? profile.name.slice(0, 1).toUpperCase() : '👤'}
-            </button>
+            <span style={{
+              fontSize: 10, fontFamily: 'var(--font-mono)',
+              color: 'var(--text-muted)', letterSpacing: '0.08em',
+              textTransform: 'uppercase', marginLeft: 4,
+            }}>
+              {orbState === 'listening' ? 'listening'
+                : orbState === 'thinking' ? 'thinking'
+                : orbState === 'speaking' ? 'speaking'
+                : 'ready'}
+            </span>
           </div>
         </div>
 
@@ -1359,23 +1531,24 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
           <div style={{
             flex: 1, display: 'flex', flexDirection: 'column',
             alignItems: 'center', justifyContent: 'space-between',
-            padding: '4px 24px 36px', overflow: 'hidden',
+            padding: '4px 22px 18px', overflow: 'hidden',
           }}>
             {/* Title */}
-            <div style={{ textAlign: 'center', paddingTop: 4, width: '100%' }}>
+            <div style={{ textAlign: 'center', paddingTop: 6, width: '100%' }}>
               <h1 style={{
-                fontSize: 30, fontWeight: 300, letterSpacing: '-0.8px',
-                background: 'linear-gradient(135deg, #00e5ff 0%, #7b5ea7 50%, #e8f0fe 100%)',
-                backgroundSize: '200% auto',
+                fontSize: 32, fontWeight: 300, letterSpacing: '-1px',
+                background: 'linear-gradient(120deg, #b6f3ff 0%, #00e5ff 30%, #7b5ea7 65%, #eef3fb 100%)',
+                backgroundSize: '220% auto',
                 WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
                 backgroundClip: 'text',
-                animation: 'shimmer 5s linear infinite',
-                marginBottom: 7, lineHeight: 1.2,
+                animation: 'shimmer 7s linear infinite',
+                marginBottom: 8, lineHeight: 1.15,
               }}>
-                {profile.name ? `Hey ${profile.name}.` : 'Hey Memoraa.'}
+                {profile.name ? `Hey ${profile.name}.` : 'Hey there.'}
               </h1>
               <p style={{
-                color: 'var(--muted-light)', fontSize: 12.5, fontWeight: 300, letterSpacing: '0.01em',
+                color: 'var(--text-3)', fontSize: 13, fontWeight: 400, letterSpacing: '0.01em',
+                lineHeight: 1.45,
               }}>
                 Speak freely. I listen, remember, and never share.
               </p>
@@ -1385,32 +1558,38 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
                 const isFollowup = pendingNudge.kind === 'followup'
                 const icon = isDigest ? '📝' : isFollowup ? '🔔' : '💭'
                 const tint = isDigest
-                  ? { bg: 'rgba(123,94,167,0.1)', border: 'rgba(123,94,167,0.3)' }
-                  : { bg: 'rgba(0,229,255,0.07)', border: 'rgba(0,229,255,0.22)' }
+                  ? { bg: 'rgba(123,94,167,0.1)', border: 'rgba(123,94,167,0.28)', accent: '#b59cd6' }
+                  : { bg: 'rgba(0,229,255,0.07)', border: 'rgba(0,229,255,0.22)', accent: '#00e5ff' }
                 const label = isDigest ? 'Your week' : isFollowup ? 'Following up' : 'Checking in'
                 return (
                 <div style={{
-                  marginTop: 14, padding: '12px 14px',
+                  marginTop: 16, padding: '14px 16px',
                   background: tint.bg,
                   border: `1px solid ${tint.border}`,
-                  borderRadius: 14,
-                  display: 'flex', flexDirection: 'column', gap: 10,
+                  borderRadius: 'var(--r-lg)',
+                  display: 'flex', flexDirection: 'column', gap: 12,
                   textAlign: 'left',
-                  animation: 'fadeUp 0.35s ease',
+                  animation: 'fadeUp 0.4s var(--ease-spring)',
+                  boxShadow: 'var(--elev-2)',
                 }}>
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-                    <span style={{ fontSize: 16, lineHeight: 1.4 }}>{icon}</span>
-                    <div style={{ flex: 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                    <span style={{
+                      fontSize: 18, lineHeight: 1, flexShrink: 0,
+                      width: 32, height: 32, borderRadius: 10,
+                      background: 'rgba(255,255,255,0.04)',
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    }}>{icon}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
                       <p style={{
-                        fontSize: 9, color: 'var(--muted-light)',
-                        fontFamily: "'Space Mono', monospace",
-                        letterSpacing: '0.08em', textTransform: 'uppercase',
-                        marginBottom: 4,
+                        fontSize: 10, color: tint.accent,
+                        fontFamily: 'var(--font-mono)',
+                        letterSpacing: '0.1em', textTransform: 'uppercase',
+                        marginBottom: 4, fontWeight: 500,
                       }}>
                         {label}
                       </p>
                       <p style={{
-                        fontSize: 13, lineHeight: 1.5, color: 'var(--text)',
+                        fontSize: 14, lineHeight: 1.5, color: 'var(--text)',
                       }}>
                         {pendingNudge.prompt}
                       </p>
@@ -1431,23 +1610,30 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
                       }}
                       style={{
                         flex: 1,
-                        background: 'var(--cyan)', color: '#000', border: 'none',
-                        borderRadius: 10, padding: '8px 12px',
-                        fontFamily: "'Sora', sans-serif", fontSize: 12, fontWeight: 600,
+                        background: 'linear-gradient(135deg, #00e5ff 0%, #1a6fff 100%)',
+                        color: '#001018', border: 'none',
+                        borderRadius: 'var(--r-md)', padding: '10px 12px',
+                        fontFamily: 'var(--font)', fontSize: 13, fontWeight: 600,
                         cursor: 'pointer',
+                        boxShadow: '0 4px 16px rgba(0,229,255,0.25)',
+                        transition: 'transform 0.15s var(--ease-out), box-shadow 0.2s',
                       }}
+                      onMouseDown={(e) => e.currentTarget.style.transform = 'scale(0.97)'}
+                      onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                      onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
                     >
                       Hear it
                     </button>
                     <button
                       onClick={() => dismissNudge(pendingNudge)}
                       style={{
-                        background: 'rgba(255,255,255,0.04)',
-                        color: 'var(--muted-light)',
-                        border: '1px solid rgba(255,255,255,0.1)',
-                        borderRadius: 10, padding: '8px 14px',
-                        fontFamily: "'Space Mono', monospace", fontSize: 11,
+                        background: 'var(--surface-1)',
+                        color: 'var(--text-2)',
+                        border: '1px solid var(--border-2)',
+                        borderRadius: 'var(--r-md)', padding: '10px 14px',
+                        fontFamily: 'var(--font)', fontSize: 12, fontWeight: 500,
                         cursor: 'pointer',
+                        transition: 'background 0.2s',
                       }}
                     >
                       Dismiss
@@ -1459,25 +1645,30 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
             </div>
 
             {/* Orb + status */}
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 26 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 28 }}>
               <Orb state={orbState} onClick={handleOrbTap} />
 
-              <div style={{ textAlign: 'center', minHeight: 44, padding: '0 12px' }}>
+              <div style={{ textAlign: 'center', minHeight: 46, padding: '0 12px' }}>
                 {transcript ? (
                   <p style={{
-                    color: 'rgba(232,240,254,0.72)', fontSize: 14, lineHeight: 1.6,
-                    animation: 'fadeUp 0.25s ease', fontStyle: 'italic',
+                    color: 'var(--text-2)', fontSize: 15, lineHeight: 1.5,
+                    animation: 'fadeUp 0.3s var(--ease-out)',
+                    fontWeight: 400, maxWidth: 360,
                   }}>
                     "{transcript}"
                   </p>
                 ) : error ? (
-                  <p style={{ color: 'rgba(255,100,100,0.75)', fontSize: 12, animation: 'fadeUp 0.25s ease' }}>
+                  <p style={{
+                    color: 'var(--rose)', fontSize: 13,
+                    animation: 'fadeUp 0.3s var(--ease-out)',
+                  }}>
                     {error}
                   </p>
                 ) : (
                   <p style={{
-                    color: 'var(--muted)', fontSize: 11, letterSpacing: '0.1em',
-                    fontFamily: "'Space Mono', monospace", textTransform: 'uppercase',
+                    color: 'var(--text-muted)', fontSize: 11, letterSpacing: '0.18em',
+                    fontFamily: 'var(--font-mono)', textTransform: 'uppercase',
+                    fontWeight: 500,
                   }}>
                     {statusText}
                   </p>
@@ -1486,55 +1677,77 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
             </div>
 
             {/* Reply */}
-            <div style={{ width: '100%', minHeight: 72 }}>
-              <ReplyBubble text={reply} />
+            <div style={{ width: '100%', minHeight: 80 }}>
+              <ReplyBubble text={reply} streaming={orbState === 'thinking' || orbState === 'speaking'} />
             </div>
 
             {/* Text input fallback (always available) */}
             <form
               onSubmit={(e) => { e.preventDefault(); sendText() }}
               style={{
-                width: '100%', display: 'flex', gap: 8, alignItems: 'center',
-                background: 'rgba(13,21,37,0.6)',
-                border: '1px solid rgba(0,212,255,0.12)',
-                borderRadius: 14, padding: '6px 6px 6px 14px',
-                backdropFilter: 'blur(8px)',
+                width: '100%', display: 'flex', gap: 6, alignItems: 'center',
+                background: 'var(--surface-glass)',
+                border: '1px solid var(--border-2)',
+                borderRadius: 'var(--r-lg)', padding: '5px 5px 5px 16px',
+                backdropFilter: 'blur(14px)',
+                WebkitBackdropFilter: 'blur(14px)',
+                transition: 'border-color 0.25s var(--ease-out), box-shadow 0.25s',
+              }}
+              onFocusCapture={(e) => {
+                e.currentTarget.style.borderColor = 'var(--border-accent-strong)'
+                e.currentTarget.style.boxShadow = '0 0 0 3px rgba(0,229,255,0.08)'
+              }}
+              onBlurCapture={(e) => {
+                e.currentTarget.style.borderColor = 'var(--border-2)'
+                e.currentTarget.style.boxShadow = 'none'
               }}
             >
               <input
                 type="text"
                 value={textInput}
                 onChange={(e) => setTextInput(e.target.value)}
-                placeholder={voiceSupported ? 'Or type a message...' : 'Voice not supported — type here'}
+                placeholder={voiceSupported ? 'Or type a message…' : 'Voice not supported — type here'}
                 disabled={orbState === 'thinking'}
                 style={{
                   flex: 1, background: 'transparent', border: 'none', outline: 'none',
-                  color: 'var(--text)', fontFamily: "'Sora', sans-serif", fontSize: 14,
-                  padding: '8px 0',
+                  color: 'var(--text)', fontFamily: 'var(--font)', fontSize: 14.5,
+                  padding: '10px 0', minWidth: 0,
                 }}
               />
               <button
                 type="submit"
+                aria-label="Send"
                 disabled={!textInput.trim() || orbState === 'thinking'}
                 style={{
-                  background: textInput.trim() ? 'var(--cyan)' : 'rgba(255,255,255,0.06)',
-                  color: textInput.trim() ? '#000' : 'var(--muted-light)',
-                  border: 'none', borderRadius: 10, padding: '8px 14px',
-                  fontFamily: "'Sora', sans-serif", fontSize: 13, fontWeight: 600,
+                  background: textInput.trim()
+                    ? 'linear-gradient(135deg, #00e5ff 0%, #1a6fff 100%)'
+                    : 'var(--surface-2)',
+                  color: textInput.trim() ? '#001018' : 'var(--text-muted)',
+                  border: 'none', borderRadius: 'var(--r-md)',
+                  width: 38, height: 38, padding: 0,
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                   cursor: textInput.trim() ? 'pointer' : 'default',
-                  transition: 'all 0.2s',
+                  transition: 'all 0.2s var(--ease-out)',
+                  boxShadow: textInput.trim() ? '0 2px 10px rgba(0,229,255,0.3)' : 'none',
                 }}
               >
-                Send
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M5 12h14M13 6l6 6-6 6" />
+                </svg>
               </button>
             </form>
 
             {/* Footer */}
             <p style={{
-              fontSize: 10, color: 'var(--muted)', letterSpacing: '0.12em',
-              fontFamily: "'Space Mono', monospace", textTransform: 'uppercase',
+              fontSize: 10, color: 'var(--text-muted)', letterSpacing: '0.16em',
+              fontFamily: 'var(--font-mono)', textTransform: 'uppercase',
+              display: 'flex', alignItems: 'center', gap: 6,
             }}>
-              🔒 Private · on-device memory
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+              Private · end-to-end
             </p>
           </div>
         )}
@@ -1543,33 +1756,35 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
         {view === 'memories' && (
           <div style={{
             flex: 1, display: 'flex', flexDirection: 'column',
-            padding: '4px 24px 32px', overflow: 'hidden',
-            animation: 'fadeIn 0.3s ease',
+            padding: '4px 22px 18px', overflow: 'hidden',
+            animation: 'fadeIn 0.35s var(--ease-out)',
           }}>
             <div style={{
-              display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
-              marginBottom: 16,
+              display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end',
+              marginBottom: 18,
             }}>
               <div>
-                <h2 style={{ fontSize: 18, fontWeight: 600, letterSpacing: '-0.4px' }}>
+                <h2 style={{ fontSize: 22, fontWeight: 600, letterSpacing: '-0.6px', lineHeight: 1.1 }}>
                   Memory
                 </h2>
                 <p style={{
-                  fontSize: 11, color: 'var(--muted)', marginTop: 3,
-                  fontFamily: "'Space Mono', monospace",
+                  fontSize: 11, color: 'var(--text-muted)', marginTop: 5,
+                  fontFamily: 'var(--font-mono)', letterSpacing: '0.04em',
                 }}>
-                  {memories.length} {memories.length === 1 ? 'memory' : 'memories'} · synced to your account
+                  {memories.length} {memories.length === 1 ? 'fact' : 'facts'} · synced
                 </p>
               </div>
               {memories.length > 0 && (
                 <button onClick={clearAll} style={{
-                  background: 'rgba(255,60,60,0.07)',
-                  border: '1px solid rgba(255,60,60,0.18)',
-                  borderRadius: 8, padding: '5px 12px',
-                  color: 'rgba(255,100,100,0.75)', fontSize: 11,
-                  fontFamily: "'Space Mono', monospace", cursor: 'pointer',
-                  transition: 'all 0.2s',
-                }}>
+                  background: 'rgba(255,107,138,0.06)',
+                  border: '1px solid rgba(255,107,138,0.2)',
+                  borderRadius: 'var(--r-md)', padding: '6px 12px',
+                  color: 'var(--rose)', fontSize: 12,
+                  fontFamily: 'var(--font)', fontWeight: 500,
+                  cursor: 'pointer', transition: 'background 0.2s',
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,107,138,0.12)'}
+                onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255,107,138,0.06)'}>
                   Clear all
                 </button>
               )}
@@ -1577,26 +1792,53 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
 
             {/* Search */}
             {memories.length > 3 && (
-              <input
-                type="text"
-                value={memorySearch}
-                onChange={(e) => setMemorySearch(e.target.value)}
-                placeholder="Search memories — what do you remember about…"
-                style={{
-                  background: 'rgba(13,21,37,0.6)',
-                  border: '1px solid rgba(0,212,255,0.15)',
-                  borderRadius: 10, padding: '9px 12px',
-                  color: 'var(--text)', fontFamily: "'Sora', sans-serif",
-                  fontSize: 13, outline: 'none', marginBottom: 10,
-                }}
-              />
+              <div style={{
+                position: 'relative', marginBottom: 12,
+              }}>
+                <svg
+                  width="16" height="16" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                  style={{
+                    position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)',
+                    color: 'var(--text-muted)', pointerEvents: 'none',
+                  }}
+                >
+                  <circle cx="11" cy="11" r="7" />
+                  <path d="m21 21-4.3-4.3" />
+                </svg>
+                <input
+                  type="text"
+                  value={memorySearch}
+                  onChange={(e) => setMemorySearch(e.target.value)}
+                  placeholder="Search memories…"
+                  style={{
+                    width: '100%',
+                    background: 'var(--surface-glass)',
+                    border: '1px solid var(--border-2)',
+                    borderRadius: 'var(--r-md)',
+                    padding: '10px 12px 10px 38px',
+                    color: 'var(--text)', fontFamily: 'var(--font)',
+                    fontSize: 14, outline: 'none',
+                    transition: 'border-color 0.2s, box-shadow 0.2s',
+                  }}
+                  onFocus={(e) => {
+                    e.currentTarget.style.borderColor = 'var(--border-accent-strong)'
+                    e.currentTarget.style.boxShadow = '0 0 0 3px rgba(0,229,255,0.08)'
+                  }}
+                  onBlur={(e) => {
+                    e.currentTarget.style.borderColor = 'var(--border-2)'
+                    e.currentTarget.style.boxShadow = 'none'
+                  }}
+                />
+              </div>
             )}
 
             {/* Category filter pills */}
             {memories.length > 5 && !memorySearch && (
               <div style={{
-                display: 'flex', gap: 6, marginBottom: 10, overflowX: 'auto',
-                paddingBottom: 4,
+                display: 'flex', gap: 6, marginBottom: 12, overflowX: 'auto',
+                paddingBottom: 4, margin: '0 -22px 12px', padding: '0 22px 4px',
+                scrollbarWidth: 'none',
               }}>
                 {['all', 'person', 'event', 'preference', 'goal', 'feeling', 'todo', 'health'].map(cat => {
                   const active = memoryCategory === cat
@@ -1606,13 +1848,14 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
                       key={cat}
                       onClick={() => setMemoryCategory(cat)}
                       style={{
-                        background: active ? 'rgba(0,229,255,0.12)' : 'rgba(255,255,255,0.03)',
-                        border: `1px solid ${active ? 'rgba(0,229,255,0.3)' : 'rgba(255,255,255,0.07)'}`,
-                        borderRadius: 999, padding: '4px 10px',
-                        color: active ? '#00e5ff' : 'var(--muted-light)',
-                        fontFamily: "'Space Mono', monospace", fontSize: 10,
-                        textTransform: 'uppercase', letterSpacing: '0.05em',
+                        background: active ? 'var(--accent-soft)' : 'var(--surface-1)',
+                        border: `1px solid ${active ? 'var(--border-accent-strong)' : 'var(--border-1)'}`,
+                        borderRadius: 'var(--r-pill)', padding: '5px 12px',
+                        color: active ? 'var(--accent)' : 'var(--text-3)',
+                        fontFamily: 'var(--font)', fontSize: 11.5, fontWeight: 500,
+                        letterSpacing: '0.01em', textTransform: 'capitalize',
                         cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
+                        transition: 'all 0.2s var(--ease-out)',
                       }}
                     >
                       {meta && cat !== 'all' ? `${meta.icon} ${cat}` : cat}
@@ -1625,6 +1868,7 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
             <div style={{
               flex: 1, overflowY: 'auto', display: 'flex',
               flexDirection: 'column', gap: 8,
+              margin: '0 -22px', padding: '2px 22px',
             }}>
               {(() => {
                 const source = memorySearchResults !== null ? memorySearchResults : memories
@@ -1634,11 +1878,28 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
 
                 if (memories.length === 0) {
                   return (
-                    <div style={{ textAlign: 'center', paddingTop: 56 }}>
-                      <p style={{ fontSize: 34, marginBottom: 14 }}>🌙</p>
-                      <p style={{ color: 'var(--muted-light)', fontSize: 13, lineHeight: 1.7 }}>
-                        Nothing remembered yet.<br />
-                        Speak to Memoraa — she'll quietly<br />note things that matter.
+                    <div style={{
+                      textAlign: 'center', paddingTop: 56,
+                      animation: 'fadeIn 0.4s var(--ease-out)',
+                    }}>
+                      <div style={{
+                        width: 64, height: 64, borderRadius: '50%',
+                        background: 'radial-gradient(circle at 35% 30%, rgba(0,229,255,0.18) 0%, rgba(0,229,255,0.04) 60%, transparent 80%)',
+                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 28, marginBottom: 18,
+                        border: '1px solid var(--border-accent)',
+                      }}>🌙</div>
+                      <p style={{
+                        color: 'var(--text-2)', fontSize: 14, lineHeight: 1.7,
+                        maxWidth: 280, margin: '0 auto', fontWeight: 400,
+                      }}>
+                        Nothing remembered yet.
+                      </p>
+                      <p style={{
+                        color: 'var(--text-muted)', fontSize: 12.5, lineHeight: 1.65,
+                        maxWidth: 280, margin: '6px auto 0',
+                      }}>
+                        Speak to Memoraa — she'll quietly note things that matter.
                       </p>
                     </div>
                   )
@@ -1646,8 +1907,8 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
                 if (filtered.length === 0) {
                   return (
                     <p style={{
-                      color: 'var(--muted)', fontSize: 12, textAlign: 'center',
-                      paddingTop: 36, fontFamily: "'Space Mono', monospace",
+                      color: 'var(--text-muted)', fontSize: 13, textAlign: 'center',
+                      paddingTop: 36, fontFamily: 'var(--font-mono)',
                     }}>
                       {memorySearch ? 'No matches.' : 'No memories in this category yet.'}
                     </p>
@@ -1673,16 +1934,16 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
         {view === 'profile' && (
           <div style={{
             flex: 1, display: 'flex', flexDirection: 'column',
-            padding: '4px 24px 32px', overflowY: 'auto',
-            animation: 'fadeIn 0.3s ease', gap: 18,
+            padding: '4px 22px 18px', overflowY: 'auto',
+            animation: 'fadeIn 0.35s var(--ease-out)', gap: 20,
           }}>
             <div>
-              <h2 style={{ fontSize: 18, fontWeight: 600, letterSpacing: '-0.4px' }}>
+              <h2 style={{ fontSize: 22, fontWeight: 600, letterSpacing: '-0.6px', lineHeight: 1.1 }}>
                 Profile
               </h2>
               <p style={{
-                fontSize: 11, color: 'var(--muted)', marginTop: 3,
-                fontFamily: "'Space Mono', monospace",
+                fontSize: 12, color: 'var(--text-muted)', marginTop: 5,
+                fontFamily: 'var(--font-mono)', letterSpacing: '0.02em',
               }}>
                 Personalize how Memoraa speaks to you
               </p>
@@ -1690,32 +1951,51 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
 
             {/* Account card */}
             <div style={{
-              background: 'rgba(0,229,255,0.04)',
-              border: '1px solid rgba(0,229,255,0.15)',
-              borderRadius: 14, padding: '14px 16px',
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+              background: 'linear-gradient(135deg, rgba(0,229,255,0.07) 0%, rgba(123,94,167,0.05) 100%)',
+              border: '1px solid var(--border-accent)',
+              borderRadius: 'var(--r-lg)', padding: '16px 18px',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14,
+              boxShadow: 'var(--elev-2)',
             }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <p style={{ fontSize: 10, color: 'var(--muted)', fontFamily: "'Space Mono', monospace", letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>
-                  Signed in as
-                </p>
-                <p style={{ fontSize: 14, fontWeight: 600, color: '#00e5ff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  @{user?.username || 'user'}
-                </p>
-                <p style={{ fontSize: 11, color: 'var(--muted-light)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {user?.primaryEmailAddress?.emailAddress || user?.primaryPhoneNumber?.phoneNumber || ''}
-                </p>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14, flex: 1, minWidth: 0 }}>
+                <div style={{
+                  width: 44, height: 44, flexShrink: 0, borderRadius: '50%',
+                  background: 'radial-gradient(circle at 35% 30%, #00e5ff 0%, #1a6fff 60%, #4a2d7a 100%)',
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 17, fontWeight: 600, color: '#001018',
+                  boxShadow: '0 4px 16px rgba(0,229,255,0.3), inset 0 1px 0 rgba(255,255,255,0.4)',
+                }}>
+                  {(user?.username || profile.name || 'U').slice(0, 1).toUpperCase()}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{
+                    fontSize: 15, fontWeight: 600, color: 'var(--text)',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}>
+                    @{user?.username || 'user'}
+                  </p>
+                  <p style={{
+                    fontSize: 11.5, color: 'var(--text-3)', marginTop: 2,
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    fontFamily: 'var(--font-mono)',
+                  }}>
+                    {user?.primaryEmailAddress?.emailAddress || user?.primaryPhoneNumber?.phoneNumber || 'Signed in'}
+                  </p>
+                </div>
               </div>
               <button
                 onClick={() => signOut()}
                 style={{
-                  background: 'rgba(255,60,60,0.07)',
-                  border: '1px solid rgba(255,60,60,0.22)',
-                  borderRadius: 10, padding: '8px 14px',
-                  color: 'rgba(255,120,120,0.85)',
-                  fontFamily: "'Space Mono', monospace", fontSize: 11,
+                  background: 'rgba(255,107,138,0.08)',
+                  border: '1px solid rgba(255,107,138,0.22)',
+                  borderRadius: 'var(--r-md)', padding: '8px 14px',
+                  color: 'var(--rose)',
+                  fontFamily: 'var(--font)', fontSize: 12, fontWeight: 500,
                   cursor: 'pointer', flexShrink: 0,
+                  transition: 'background 0.2s',
                 }}
+                onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,107,138,0.14)'}
+                onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255,107,138,0.08)'}
               >
                 Sign out
               </button>
@@ -1724,9 +2004,10 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
             {/* Name field */}
             <label style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <span style={{
-                fontSize: 11, color: 'var(--muted-light)',
-                fontFamily: "'Space Mono', monospace",
-                letterSpacing: '0.08em', textTransform: 'uppercase',
+                fontSize: 11, color: 'var(--text-3)',
+                fontFamily: 'var(--font-mono)',
+                letterSpacing: '0.1em', textTransform: 'uppercase',
+                fontWeight: 500,
               }}>
                 Your name
               </span>
@@ -1736,11 +2017,20 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
                 onChange={(e) => setProfile(p => ({ ...p, name: e.target.value.slice(0, 40) }))}
                 placeholder="What should I call you?"
                 style={{
-                  background: 'rgba(13,21,37,0.6)',
-                  border: '1px solid rgba(0,212,255,0.15)',
-                  borderRadius: 12, padding: '12px 14px',
-                  color: 'var(--text)', fontFamily: "'Sora', sans-serif",
-                  fontSize: 14, outline: 'none',
+                  background: 'var(--surface-glass)',
+                  border: '1px solid var(--border-2)',
+                  borderRadius: 'var(--r-md)', padding: '12px 14px',
+                  color: 'var(--text)', fontFamily: 'var(--font)',
+                  fontSize: 14.5, outline: 'none',
+                  transition: 'border-color 0.2s, box-shadow 0.2s',
+                }}
+                onFocus={(e) => {
+                  e.currentTarget.style.borderColor = 'var(--border-accent-strong)'
+                  e.currentTarget.style.boxShadow = '0 0 0 3px rgba(0,229,255,0.08)'
+                }}
+                onBlur={(e) => {
+                  e.currentTarget.style.borderColor = 'var(--border-2)'
+                  e.currentTarget.style.boxShadow = 'none'
                 }}
               />
             </label>
@@ -1748,9 +2038,10 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
             {/* Language picker */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <span style={{
-                fontSize: 11, color: 'var(--muted-light)',
-                fontFamily: "'Space Mono', monospace",
-                letterSpacing: '0.08em', textTransform: 'uppercase',
+                fontSize: 11, color: 'var(--text-3)',
+                fontFamily: 'var(--font-mono)',
+                letterSpacing: '0.1em', textTransform: 'uppercase',
+                fontWeight: 500,
               }}>
                 Language
               </span>
@@ -1764,23 +2055,31 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
                       key={l.code}
                       onClick={() => setProfile(p => ({ ...p, language: l.code }))}
                       style={{
-                        background: selected ? 'rgba(0,229,255,0.1)' : 'rgba(13,21,37,0.6)',
-                        border: `1px solid ${selected ? 'rgba(0,229,255,0.35)' : 'rgba(255,255,255,0.07)'}`,
-                        borderRadius: 12, padding: '10px 12px',
-                        color: selected ? '#00e5ff' : 'var(--text)',
-                        fontFamily: "'Sora', sans-serif", fontSize: 12,
+                        position: 'relative',
+                        background: selected ? 'var(--accent-soft)' : 'var(--surface-1)',
+                        border: `1px solid ${selected ? 'var(--border-accent-strong)' : 'var(--border-1)'}`,
+                        borderRadius: 'var(--r-md)', padding: '11px 12px',
+                        color: selected ? 'var(--accent)' : 'var(--text)',
+                        fontFamily: 'var(--font)', fontSize: 13,
                         cursor: 'pointer', textAlign: 'left',
-                        transition: 'all 0.2s',
-                        display: 'flex', flexDirection: 'column', gap: 2,
+                        transition: 'all 0.2s var(--ease-out)',
+                        display: 'flex', flexDirection: 'column', gap: 3,
                       }}
                     >
-                      <span style={{ fontWeight: 600 }}>{l.native}</span>
+                      <span style={{ fontWeight: 600, lineHeight: 1.1 }}>{l.native}</span>
                       <span style={{
-                        fontSize: 10, color: 'var(--muted-light)',
-                        fontFamily: "'Space Mono', monospace",
+                        fontSize: 10, color: selected ? 'rgba(0,229,255,0.7)' : 'var(--text-muted)',
+                        fontFamily: 'var(--font-mono)', letterSpacing: '0.04em',
                       }}>
                         {l.code}
                       </span>
+                      {selected && (
+                        <span style={{
+                          position: 'absolute', top: 8, right: 8,
+                          width: 6, height: 6, borderRadius: '50%',
+                          background: 'var(--accent)', boxShadow: '0 0 6px var(--accent-glow)',
+                        }} />
+                      )}
                     </button>
                   )
                 })}
@@ -1790,43 +2089,65 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
             {/* Daily check-in */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <span style={{
-                fontSize: 11, color: 'var(--muted-light)',
-                fontFamily: "'Space Mono', monospace",
-                letterSpacing: '0.08em', textTransform: 'uppercase',
+                fontSize: 11, color: 'var(--text-3)',
+                fontFamily: 'var(--font-mono)',
+                letterSpacing: '0.1em', textTransform: 'uppercase',
+                fontWeight: 500,
               }}>
                 Daily check-in
               </span>
               <div style={{
-                background: 'rgba(13,21,37,0.6)',
-                border: '1px solid rgba(0,212,255,0.15)',
-                borderRadius: 12, padding: '12px 14px',
-                display: 'flex', flexDirection: 'column', gap: 10,
+                background: 'var(--surface-glass)',
+                border: '1px solid var(--border-2)',
+                borderRadius: 'var(--r-md)', padding: '14px 16px',
+                display: 'flex', flexDirection: 'column', gap: 12,
               }}>
                 <label style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                   gap: 8, cursor: 'pointer',
                 }}>
-                  <span style={{ fontSize: 13 }}>Send me a check-in</span>
-                  <input
-                    type="checkbox"
-                    checked={prefs.nudge_enabled}
-                    onChange={(e) => savePrefs({ nudge_enabled: e.target.checked })}
-                    style={{ width: 18, height: 18, accentColor: '#00e5ff', cursor: 'pointer' }}
-                  />
+                  <span style={{ fontSize: 14 }}>Send me a check-in</span>
+                  {/* Custom toggle */}
+                  <span style={{
+                    position: 'relative', width: 38, height: 22, flexShrink: 0,
+                    background: prefs.nudge_enabled ? 'linear-gradient(135deg, #00e5ff, #1a6fff)' : 'rgba(255,255,255,0.08)',
+                    borderRadius: 999,
+                    transition: 'background 0.25s var(--ease-out)',
+                    boxShadow: prefs.nudge_enabled ? '0 0 12px rgba(0,229,255,0.4)' : 'none',
+                  }}>
+                    <input
+                      type="checkbox"
+                      checked={prefs.nudge_enabled}
+                      onChange={(e) => savePrefs({ nudge_enabled: e.target.checked })}
+                      style={{
+                        position: 'absolute', inset: 0, opacity: 0,
+                        width: '100%', height: '100%', cursor: 'pointer', margin: 0,
+                      }}
+                    />
+                    <span style={{
+                      position: 'absolute', top: 3,
+                      left: prefs.nudge_enabled ? 19 : 3,
+                      width: 16, height: 16, borderRadius: '50%',
+                      background: '#fff',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.4)',
+                      transition: 'left 0.25s var(--ease-spring)',
+                    }} />
+                  </span>
                 </label>
                 {prefs.nudge_enabled && (
                   <label style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    gap: 8, animation: 'fadeUp 0.3s var(--ease-out)',
                   }}>
-                    <span style={{ fontSize: 13 }}>At</span>
+                    <span style={{ fontSize: 13.5, color: 'var(--text-2)' }}>At</span>
                     <select
                       value={prefs.nudge_local_hour}
                       onChange={(e) => savePrefs({ nudge_local_hour: parseInt(e.target.value, 10) })}
                       style={{
-                        background: 'rgba(13,21,37,0.9)',
-                        border: '1px solid rgba(0,212,255,0.2)',
-                        borderRadius: 8, padding: '6px 10px',
-                        color: 'var(--text)', fontFamily: "'Space Mono', monospace", fontSize: 12,
+                        background: 'var(--surface-2)',
+                        border: '1px solid var(--border-accent)',
+                        borderRadius: 'var(--r-sm)', padding: '6px 10px',
+                        color: 'var(--text)', fontFamily: 'var(--font-mono)', fontSize: 12,
                         cursor: 'pointer',
                       }}
                     >
@@ -1839,8 +2160,8 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
                   </label>
                 )}
                 <p style={{
-                  fontSize: 10, color: 'var(--muted)',
-                  fontFamily: "'Space Mono', monospace",
+                  fontSize: 10.5, color: 'var(--text-muted)',
+                  fontFamily: 'var(--font-mono)', letterSpacing: '0.04em',
                 }}>
                   {prefs.timezone}
                 </p>
@@ -1849,33 +2170,56 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
 
             {/* Voice status */}
             <div style={{
-              background: voiceSupported ? 'rgba(0,229,255,0.05)' : 'rgba(255,170,0,0.05)',
-              border: `1px solid ${voiceSupported ? 'rgba(0,229,255,0.15)' : 'rgba(255,170,0,0.2)'}`,
-              borderRadius: 12, padding: '12px 14px',
-              display: 'flex', alignItems: 'center', gap: 10,
+              background: voiceSupported ? 'rgba(0,255,157,0.05)' : 'rgba(255,180,84,0.06)',
+              border: `1px solid ${voiceSupported ? 'rgba(0,255,157,0.18)' : 'rgba(255,180,84,0.22)'}`,
+              borderRadius: 'var(--r-md)', padding: '14px 16px',
+              display: 'flex', alignItems: 'center', gap: 12,
             }}>
-              <span style={{ fontSize: 16 }}>{voiceSupported ? '🎙️' : '⚠️'}</span>
+              <span style={{
+                width: 36, height: 36, flexShrink: 0, borderRadius: 10,
+                background: voiceSupported ? 'rgba(0,255,157,0.1)' : 'rgba(255,180,84,0.1)',
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                color: voiceSupported ? 'var(--green)' : 'var(--amber)',
+              }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="9" y="3" width="6" height="12" rx="3" />
+                  <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+                </svg>
+              </span>
               <div style={{ flex: 1 }}>
-                <p style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>
+                <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 3 }}>
                   {voiceSupported ? 'Voice input ready' : 'Voice input unavailable'}
                 </p>
-                <p style={{ fontSize: 11, color: 'var(--muted-light)', lineHeight: 1.5 }}>
+                <p style={{ fontSize: 11.5, color: 'var(--text-3)', lineHeight: 1.5 }}>
                   {voiceSupported
-                    ? 'Tap the orb to speak. Browser speech recognition is supported.'
-                    : 'This browser doesn\'t support speech recognition. Use the text box on the home screen, or open in Chrome.'}
+                    ? 'Tap the orb to speak. Tap again to stop.'
+                    : 'This browser doesn\'t support speech recognition. Use the text box, or open in Chrome.'}
                 </p>
               </div>
             </div>
 
             <p style={{
-              fontSize: 10, color: 'var(--muted)',
-              fontFamily: "'Space Mono', monospace",
-              letterSpacing: '0.1em', textAlign: 'center', marginTop: 'auto', paddingTop: 18,
+              fontSize: 10, color: 'var(--text-muted)',
+              fontFamily: 'var(--font-mono)',
+              letterSpacing: '0.16em', textAlign: 'center',
+              marginTop: 'auto', paddingTop: 18,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
             }}>
-              🔒 Profile stays in your account
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+              Stays in your account
             </p>
           </div>
         )}
+
+        <BottomNav
+          view={view}
+          setView={setView}
+          memoriesCount={memories.length}
+          profileInitial={profile.name ? profile.name.slice(0, 1).toUpperCase() : ''}
+        />
       </div>
     </div>
   )
