@@ -87,22 +87,71 @@ function Aurora({ state }) {
 
 // ── Speaking waveform bars ─────────────────────────────────────
 function WaveBar({ delay }) {
+  // Outer scales by --lv (live amplitude from the TTS analyser, set on the
+  // wrapper). Inner runs the rhythm keyframe. Composed transforms multiply.
   return (
     <div style={{
-      width: 3, height: 22, borderRadius: 999,
-      background: 'linear-gradient(180deg, #00e5ff 0%, #1a6fff 100%)',
-      boxShadow: '0 0 8px rgba(0,229,255,0.6)',
-      animation: `speaking-wave 0.85s var(--ease-in-out) ${delay}s infinite`,
+      transform: 'scaleY(var(--lv, 0.5))',
       transformOrigin: 'center',
-    }} />
+      transition: 'transform 0.06s linear',
+    }}>
+      <div style={{
+        width: 3, height: 26, borderRadius: 999,
+        background: 'linear-gradient(180deg, #00e5ff 0%, #1a6fff 100%)',
+        boxShadow: '0 0 10px rgba(0,229,255,0.65)',
+        animation: `speaking-wave 0.85s var(--ease-in-out) ${delay}s infinite`,
+        transformOrigin: 'center',
+      }} />
+    </div>
   )
 }
 
 // ── Orb ────────────────────────────────────────────────────────
-function Orb({ state, onClick }) {
+function Orb({ state, onClick, levelRef }) {
   const isListening = state === 'listening'
   const isThinking = state === 'thinking'
   const isSpeaking = state === 'speaking'
+  const reactive = isListening || isSpeaking
+
+  const bodyRef = useRef(null)
+  const haloRef = useRef(null)
+  const wavesRef = useRef(null)
+
+  // Live amplitude → scale + glow. Runs only while listening/speaking.
+  // Uses refs (no React re-renders) so it stays smooth at 60fps.
+  useEffect(() => {
+    if (!reactive || !levelRef) return
+    let raf = 0
+    let displayed = 0
+    const loop = () => {
+      const target = Math.min(1, Math.max(0, levelRef.current || 0))
+      // Critically-damped follow for natural motion.
+      displayed += (target - displayed) * 0.28
+      const bump = displayed * (isListening ? 0.16 : 0.13)
+      const scale = 1 + bump
+      const glow = 0.5 + displayed * 0.5
+      if (bodyRef.current) {
+        bodyRef.current.style.transform = `scale(${scale.toFixed(4)})`
+      }
+      if (haloRef.current) {
+        haloRef.current.style.opacity = glow.toFixed(3)
+        haloRef.current.style.transform = `scale(${(1 + bump * 0.6).toFixed(4)})`
+      }
+      if (wavesRef.current && isSpeaking) {
+        wavesRef.current.style.setProperty('--lv', String(0.4 + displayed * 0.6))
+      }
+      raf = requestAnimationFrame(loop)
+    }
+    raf = requestAnimationFrame(loop)
+    return () => {
+      cancelAnimationFrame(raf)
+      if (bodyRef.current) bodyRef.current.style.transform = ''
+      if (haloRef.current) {
+        haloRef.current.style.opacity = ''
+        haloRef.current.style.transform = ''
+      }
+    }
+  }, [reactive, isListening, isSpeaking, levelRef])
 
   const orbGradient = isThinking
     ? 'conic-gradient(from 210deg, #00e5ff 0deg, #7b5ea7 120deg, #1a6fff 240deg, #00e5ff 360deg)'
@@ -145,7 +194,7 @@ function Orb({ state, onClick }) {
       ))}
 
       {/* Outer halo */}
-      <div style={{
+      <div ref={haloRef} style={{
         position: 'absolute', inset: -40, borderRadius: '50%',
         background: isListening
           ? 'radial-gradient(circle, rgba(0,229,255,0.25) 0%, transparent 60%)'
@@ -155,17 +204,21 @@ function Orb({ state, onClick }) {
           ? 'radial-gradient(circle, rgba(123,94,167,0.25) 0%, transparent 60%)'
           : 'radial-gradient(circle, rgba(0,212,255,0.15) 0%, transparent 60%)',
         filter: 'blur(20px)',
-        transition: 'background 0.8s var(--ease-out)',
+        transition: 'background 0.8s var(--ease-out), opacity 0.18s linear, transform 0.12s var(--ease-out)',
         pointerEvents: 'none',
       }} />
 
       {/* Orb body */}
-      <div style={{
+      <div ref={bodyRef} style={{
         position: 'absolute', inset: 0, borderRadius: '50%',
         background: orbGradient,
+        // When reactive, we drive scale via rAF, so disable the breathe loop.
         animation: isThinking
           ? 'thinking-orbit 2.2s linear infinite, breathe 2.6s var(--ease-in-out) infinite'
+          : reactive
+          ? 'none'
           : 'breathe 4.2s var(--ease-in-out) infinite',
+        willChange: reactive ? 'transform' : 'auto',
         boxShadow: isListening
           ? '0 0 80px 18px rgba(0,229,255,0.42), 0 0 200px 60px rgba(123,94,167,0.18), inset 0 0 60px rgba(255,255,255,0.08), inset 0 -20px 60px rgba(0,0,0,0.3)'
           : isSpeaking
@@ -173,7 +226,9 @@ function Orb({ state, onClick }) {
           : isThinking
           ? '0 0 70px 14px rgba(123,94,167,0.32), 0 0 180px 50px rgba(0,212,255,0.12), inset 0 0 60px rgba(255,255,255,0.08), inset 0 -20px 60px rgba(0,0,0,0.3)'
           : '0 0 60px 10px rgba(0,212,255,0.18), 0 0 140px 40px rgba(123,94,167,0.1), inset 0 0 60px rgba(255,255,255,0.06), inset 0 -20px 60px rgba(0,0,0,0.35)',
-        transition: 'box-shadow 0.8s var(--ease-out), background 0.8s var(--ease-out)',
+        transition: reactive
+          ? 'box-shadow 0.4s var(--ease-out), background 0.8s var(--ease-out)'
+          : 'box-shadow 0.8s var(--ease-out), background 0.8s var(--ease-out), transform 0.4s var(--ease-out)',
       }}>
         {/* Specular highlight (top-left) */}
         <div style={{
@@ -209,11 +264,14 @@ function Orb({ state, onClick }) {
 
       {/* Speaking waveform overlay */}
       {isSpeaking && (
-        <div style={{
+        <div ref={wavesRef} style={{
           position: 'absolute', inset: 0, borderRadius: '50%',
           display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
           animation: 'fadeIn 0.4s var(--ease-out)',
           pointerEvents: 'none',
+          // CSS custom property the WaveBar reads to scale its height
+          // (set per-frame from levelRef)
+          '--lv': 0.5,
         }}>
           {[0, 0.08, 0.18, 0.08, 0].map((d, i) => (
             <WaveBar key={i} delay={d} />
@@ -436,7 +494,117 @@ function MemoryChip({ id, text, category, dueAt, index, onDelete }) {
   )
 }
 
-// ── Reply bubble ───────────────────────────────────────────────
+// ── Chat log ───────────────────────────────────────────────────
+function ChatLog({ history, streamingUser, streamingReply, streaming }) {
+  const scrollRef = useRef(null)
+
+  // Build display: last few stored turns, plus the in-flight pair while
+  // streaming (transcript not yet in history, partial reply not yet final).
+  const recent = history.slice(-6)
+  const display = [...recent]
+  if (streaming) {
+    if (streamingUser) {
+      display.push({ role: 'user', content: streamingUser, ephemeral: true })
+    }
+    if (streamingReply) {
+      display.push({ role: 'assistant', content: streamingReply, ephemeral: true, streaming: true })
+    }
+  }
+
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    // smooth-scroll to bottom on new content
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+  }, [display.length, streamingReply])
+
+  if (display.length === 0) return null
+
+  return (
+    <div
+      ref={scrollRef}
+      style={{
+        width: '100%',
+        maxHeight: 260,
+        overflowY: 'auto',
+        display: 'flex', flexDirection: 'column', gap: 8,
+        padding: '4px 2px',
+        scrollbarWidth: 'thin',
+        WebkitMaskImage: 'linear-gradient(180deg, transparent 0%, #000 18px, #000 calc(100% - 8px), transparent 100%)',
+        maskImage: 'linear-gradient(180deg, transparent 0%, #000 18px, #000 calc(100% - 8px), transparent 100%)',
+      }}
+    >
+      {display.map((m, i) => {
+        const isUser = m.role === 'user'
+        const isLatest = i === display.length - 1
+        return (
+          <div
+            key={i}
+            style={{
+              display: 'flex',
+              justifyContent: isUser ? 'flex-end' : 'flex-start',
+              animation: m.ephemeral ? 'fadeUp 0.3s var(--ease-spring) both' : undefined,
+            }}
+          >
+            <div style={{
+              maxWidth: '86%',
+              padding: isUser ? '8px 12px' : '10px 14px',
+              borderRadius: isUser ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
+              background: isUser
+                ? 'var(--surface-2)'
+                : 'linear-gradient(180deg, rgba(13,21,37,0.7) 0%, rgba(13,21,37,0.5) 100%)',
+              border: isUser
+                ? '1px solid var(--border-1)'
+                : '1px solid var(--border-accent)',
+              backdropFilter: isUser ? 'none' : 'blur(12px) saturate(140%)',
+              WebkitBackdropFilter: isUser ? 'none' : 'blur(12px) saturate(140%)',
+              boxShadow: isLatest && !isUser ? 'var(--elev-2)' : 'none',
+            }}>
+              {!isUser && isLatest && (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4,
+                }}>
+                  <span style={{
+                    width: 5, height: 5, borderRadius: '50%',
+                    background: 'var(--accent)',
+                    boxShadow: '0 0 6px var(--accent-glow)',
+                  }} />
+                  <span style={{
+                    fontSize: 9, fontFamily: 'var(--font-mono)',
+                    color: 'var(--accent)', letterSpacing: '0.12em', textTransform: 'uppercase',
+                    fontWeight: 500,
+                  }}>
+                    Memoraa
+                  </span>
+                </div>
+              )}
+              <p style={{
+                fontSize: isUser ? 13.5 : 14,
+                lineHeight: 1.5,
+                color: isUser ? 'var(--text-2)' : 'var(--text)',
+                fontWeight: 400,
+                wordBreak: 'break-word',
+              }}>
+                {m.content}
+                {m.streaming && (
+                  <span style={{
+                    display: 'inline-block', width: 6, height: 13,
+                    background: 'var(--accent)', marginLeft: 3,
+                    verticalAlign: 'text-bottom',
+                    animation: 'caret-blink 1s steps(1) infinite',
+                    borderRadius: 1,
+                  }} />
+                )}
+              </p>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ── Reply bubble (kept for nudge previews / standalone) ───────
 function ReplyBubble({ text, streaming }) {
   if (!text) return null
   return (
@@ -558,6 +726,16 @@ function MemoraaApp({ getToken }) {
 
   // Voice-activity detection (auto-stop listening on silence)
   const vadCleanupRef = useRef(null)
+
+  // Live amplitude (0..1) — driven by VAD while listening, by AnalyserNode while speaking.
+  // The Orb reads this via rAF and applies real-time transforms (no React re-render).
+  const levelRef = useRef(0)
+
+  // Shared AudioContext + Analyser for TTS playback reactivity
+  const audioCtxRef = useRef(null)
+  const analyserRef = useRef(null)
+  const analyserBufRef = useRef(null)
+  const ttsRafRef = useRef(0)
 
   // Auth-aware fetch helper
   const authedFetch = useCallback(async (input, init = {}) => {
@@ -693,6 +871,8 @@ function MemoraaApp({ getToken }) {
     try { mediaStreamRef.current?.getTracks?.().forEach(t => t.stop()) } catch {}
     try { audioPlayerRef.current?.pause?.() } catch {}
     try { synthRef.current?.cancel?.() } catch {}
+    try { cancelAnimationFrame(ttsRafRef.current) } catch {}
+    try { audioCtxRef.current?.close?.() } catch {}
   }, [])
 
   // PWA install prompt
@@ -800,6 +980,53 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
     audioPlayingRef.current = false
   }, [])
 
+  // Wire a TTS <audio> element through a shared AudioContext + AnalyserNode
+  // so we can drive the orb pulse from the real playback amplitude. Returns a
+  // stop fn that detaches the rAF loop and the per-source MediaElementNode.
+  const attachAnalyser = useCallback((audio) => {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext
+      if (!Ctx) return () => {}
+      if (!audioCtxRef.current) {
+        audioCtxRef.current = new Ctx()
+        const an = audioCtxRef.current.createAnalyser()
+        an.fftSize = 256
+        an.smoothingTimeConstant = 0.65
+        analyserRef.current = an
+        analyserBufRef.current = new Uint8Array(an.fftSize)
+      }
+      const ctx = audioCtxRef.current
+      if (ctx.state === 'suspended') { try { ctx.resume() } catch {} }
+      const an = analyserRef.current
+      const buf = analyserBufRef.current
+      const src = ctx.createMediaElementSource(audio)
+      src.connect(an)
+      src.connect(ctx.destination)
+      let raf = 0
+      const tick = () => {
+        an.getByteTimeDomainData(buf)
+        let s = 0
+        for (let i = 0; i < buf.length; i++) {
+          const v = (buf[i] - 128) / 128
+          s += v * v
+        }
+        const rms = Math.sqrt(s / buf.length)
+        // Map TTS RMS (~0.04..0.2 typical) onto 0..1 with a soft knee.
+        levelRef.current = Math.min(1, Math.pow(rms * 7, 0.6))
+        raf = requestAnimationFrame(tick)
+      }
+      raf = requestAnimationFrame(tick)
+      ttsRafRef.current = raf
+      return () => {
+        try { cancelAnimationFrame(raf) } catch {}
+        try { src.disconnect() } catch {}
+        levelRef.current = 0
+      }
+    } catch {
+      return () => {}
+    }
+  }, [])
+
   // Drain slots strictly in sequence: only play `next` once its blob is ready.
   // Pending fetches (slot === null) block the queue; skipped (failed) slots
   // are stepped over without playing.
@@ -827,7 +1054,9 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
       const url = slot.url
       const audio = new Audio(url)
       audioPlayerRef.current = audio
+      const detachAnalyser = attachAnalyser(audio)
       const cleanup = () => {
+        try { detachAnalyser() } catch {}
         try { URL.revokeObjectURL(url) } catch {}
         audioPlayingRef.current = false
         if (audioPlayerRef.current === audio) audioPlayerRef.current = null
@@ -838,7 +1067,7 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
       audio.play().catch(cleanup)
       return
     }
-  }, [])
+  }, [attachAnalyser])
 
   const enqueueTTS = useCallback(async (text) => {
     const t = (text || '').trim()
@@ -1373,6 +1602,10 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
         const rms = Math.sqrt(s / buf.length)
         const now = performance.now()
 
+        // Drive the orb's live reactivity: map RMS through a soft curve so a
+        // whisper still moves the orb a bit and shouts don't blow it out.
+        levelRef.current = Math.min(1, Math.pow(rms * 4.5, 0.65))
+
         if (now - startedAt > MAX_RECORDING_MS) { stopOnce(); return }
 
         if (rms > SILENCE_RMS) {
@@ -1389,6 +1622,7 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
       vadCleanupRef.current = () => {
         stopped = true
         cancelAnimationFrame(raf)
+        levelRef.current = 0
         try { source.disconnect() } catch {}
         try { audioCtx.close() } catch {}
         vadCleanupRef.current = null
@@ -1646,18 +1880,10 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
 
             {/* Orb + status */}
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 28 }}>
-              <Orb state={orbState} onClick={handleOrbTap} />
+              <Orb state={orbState} onClick={handleOrbTap} levelRef={levelRef} />
 
-              <div style={{ textAlign: 'center', minHeight: 46, padding: '0 12px' }}>
-                {transcript ? (
-                  <p style={{
-                    color: 'var(--text-2)', fontSize: 15, lineHeight: 1.5,
-                    animation: 'fadeUp 0.3s var(--ease-out)',
-                    fontWeight: 400, maxWidth: 360,
-                  }}>
-                    "{transcript}"
-                  </p>
-                ) : error ? (
+              <div style={{ textAlign: 'center', minHeight: 24, padding: '0 12px' }}>
+                {error ? (
                   <p style={{
                     color: 'var(--rose)', fontSize: 13,
                     animation: 'fadeUp 0.3s var(--ease-out)',
@@ -1676,9 +1902,14 @@ Be generous with memories — small details are valuable. Do NOT output MEMORY_J
               </div>
             </div>
 
-            {/* Reply */}
-            <div style={{ width: '100%', minHeight: 80 }}>
-              <ReplyBubble text={reply} streaming={orbState === 'thinking' || orbState === 'speaking'} />
+            {/* Conversation */}
+            <div style={{ width: '100%', minHeight: 80, display: 'flex' }}>
+              <ChatLog
+                history={history}
+                streamingUser={transcript}
+                streamingReply={reply}
+                streaming={orbState === 'thinking' || orbState === 'speaking'}
+              />
             </div>
 
             {/* Text input fallback (always available) */}
